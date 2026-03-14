@@ -1,0 +1,19 @@
+#!/bin/bash
+# postinstall — TurtleShell.ai Node Installer
+# PLACEHOLDER — Full implementation in PROMPT-006b (Phase 2)
+# This placeholder confirms the script fires correctly
+
+set -e
+LOG=/var/log/turtleshell-install.log
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG"; }
+
+log "================================================"
+log "TurtleShell.ai Sovereign Node Installer v1.7.0"
+log "================================================"
+log "Phase 1 placeholder — postinstall fired correctly"
+log "Node installer scaffold verified"
+log "Full implementation: PROMPT-006b"
+log "================================================"
+
+exit 0

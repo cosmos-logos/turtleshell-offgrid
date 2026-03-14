@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>TurtleShell.ai Sovereign Node</title>
+    <organization>ai.turtleshell</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+
+    <!-- Placeholder Distribution.xml — Phase 1 scaffold only -->
+    <!-- Full implementation in PROMPT-006b -->
+
+    <welcome    file="welcome.html"/>
+    <license    file="license.html"/>
+    <conclusion file="conclusion.html"/>
+    <background file="background.png" mime-type="image/png" alignment="bottomleft" scaling="none"/>
+
+    <choices-outline>
+        <line choice="default">
+            <line choice="ai.turtleshell.installer.pkg"/>
+        </line>
+    </choices-outline>
+
+    <choice id="default"/>
+    <choice id="ai.turtleshell.installer.pkg" visible="false">
+        <pkg-ref id="ai.turtleshell.installer.pkg"/>
+    </choice>
+
+    <pkg-ref id="ai.turtleshell.installer.pkg" version="1.7.0" onConclusion="none">TurtleShell.pkg</pkg-ref>
+</installer-gui-script>

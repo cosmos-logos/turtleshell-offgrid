@@ -1,0 +1,7 @@
+# mac/.gitignore (root level)
+.build-config
+mac/build/*.pkg
+mac/build/*.zip
+*.DS_Store
+node_modules/
+.env
