@@ -1,20 +1,17 @@
 # mac/.build-config.example
-# Copy this to .build-config and fill in your values
-# NEVER commit .build-config — it contains secrets
 
 # Apple Developer credentials
 APPLE_ID="your@apple.id"
-TEAM_ID="XXXXXXXXXX"
+TEAM_ID="B49L273ED5"
 APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
 
-# Signing identity (exact string from Keychain)
-# Run: security find-identity -v -p basic | grep "Developer ID Installer"
-INSTALLER_IDENTITY="Developer ID Installer: CloudPremise LLC (XXXXXXXXXX)"
+# Signing identity (confirmed in Keychain)
+INSTALLER_IDENTITY="Developer ID Installer: CloudPremise LLC (B49L273ED5)"
 
 # Package metadata
 VERSION="1.7.0"
 IDENTIFIER="ai.turtleshell.installer"
 PKG_NAME="TurtleShell"
 
-# Install manifest URL (where postinstall pulls docker-compose.yml)
+# Fleet manifest URL
 INSTALL_MANIFEST_URL="https://install.turtleshell.ai"

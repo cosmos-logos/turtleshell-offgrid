@@ -2,6 +2,9 @@
 .build-config
 mac/build/*.pkg
 mac/build/*.zip
+mac/build/*.cer
+mac/build/*.key
+mac/build/*.certSigningRequest
 *.DS_Store
 node_modules/
 .env

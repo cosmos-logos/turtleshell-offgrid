@@ -1,19 +1,277 @@
 #!/bin/bash
-# postinstall — TurtleShell.ai Node Installer
-# PLACEHOLDER — Full implementation in PROMPT-006b (Phase 2)
-# This placeholder confirms the script fires correctly
+# =============================================================
+# TurtleShell.ai Sovereign Node Installer — postinstall
+# CloudPremise LLC — brain/1.7.x.x
+# Runs as root after wizard Install click
+# =============================================================
 
-set -e
+set -euo pipefail
+
+# ── LOGGING ──────────────────────────────────────────────────
 LOG=/var/log/turtleshell-install.log
+mkdir -p "$(dirname $LOG)"
 
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG"; }
+log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ $1" | tee -a "$LOG"; }
+warn() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠ $1" | tee -a "$LOG"; }
+fail() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ $1" | tee -a "$LOG"; exit 1; }
 
-log "================================================"
+log "=============================================="
 log "TurtleShell.ai Sovereign Node Installer v1.7.0"
-log "================================================"
-log "Phase 1 placeholder — postinstall fired correctly"
-log "Node installer scaffold verified"
-log "Full implementation: PROMPT-006b"
-log "================================================"
+log "CloudPremise LLC"
+log "=============================================="
+
+# ── ENVIRONMENT ───────────────────────────────────────────────
+# Running as root during install — resolve the real user
+REAL_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "${SUDO_USER:-$USER}")
+REAL_HOME=$(eval echo "~$REAL_USER")
+TURTLE_DIR="$REAL_HOME/turtleshell"
+TURTLE_DATA="$REAL_HOME/.turtleshell"
+ARCH=$(uname -m)
+
+log "User: $REAL_USER"
+log "Home: $REAL_HOME"
+log "Architecture: $ARCH"
+
+# ── STEP 1 — HOMEBREW ─────────────────────────────────────────
+log "Step 1/9 — Homebrew"
+
+if command -v brew &>/dev/null; then
+  log "Homebrew already installed — skipping"
+else
+  log "Installing Homebrew..."
+  sudo -u "$REAL_USER" /bin/bash -c \
+    "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    </dev/null || fail "Homebrew installation failed"
+
+  # Add to PATH for Apple Silicon
+  if [ "$ARCH" = "arm64" ]; then
+    BREW_PATH="/opt/homebrew/bin"
+  else
+    BREW_PATH="/usr/local/bin"
+  fi
+
+  # Add brew to shell profile
+  PROFILE="$REAL_HOME/.zprofile"
+  if ! grep -q "brew shellenv" "$PROFILE" 2>/dev/null; then
+    echo "eval \"\$($BREW_PATH/brew shellenv)\"" >> "$PROFILE"
+  fi
+fi
+
+# Resolve brew path
+if [ "$ARCH" = "arm64" ]; then
+  BREW="/opt/homebrew/bin/brew"
+else
+  BREW="/usr/local/bin/brew"
+fi
+
+[ -x "$BREW" ] || fail "Homebrew not found at $BREW"
+log "Homebrew ready: $($BREW --version | head -1)"
+
+# ── STEP 2 — DOCKER ───────────────────────────────────────────
+log "Step 2/9 — Docker Desktop"
+
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+  log "Docker already running — skipping install"
+else
+  if [ ! -d "/Applications/Docker.app" ]; then
+    log "Installing Docker Desktop..."
+    sudo -u "$REAL_USER" "$BREW" install --cask docker \
+      || fail "Docker Desktop installation failed"
+  fi
+
+  log "Starting Docker Desktop..."
+  sudo -u "$REAL_USER" open -a Docker
+
+  # Poll for Docker daemon — 180 second timeout
+  log "Waiting for Docker daemon..."
+  TIMEOUT=180
+  ELAPSED=0
+  until sudo -u "$REAL_USER" docker info &>/dev/null 2>&1; do
+    sleep 3
+    ELAPSED=$((ELAPSED + 3))
+    if [ $ELAPSED -ge $TIMEOUT ]; then
+      fail "Docker daemon did not start within ${TIMEOUT}s. Please start Docker manually and re-run."
+    fi
+  done
+fi
+
+DOCKER_VERSION=$(sudo -u "$REAL_USER" docker --version)
+log "Docker ready: $DOCKER_VERSION"
+
+# ── STEP 3 — TAILSCALE ────────────────────────────────────────
+log "Step 3/9 — Tailscale"
+
+if command -v tailscale &>/dev/null; then
+  log "Tailscale already installed — skipping"
+else
+  log "Installing Tailscale..."
+  sudo -u "$REAL_USER" "$BREW" install --cask tailscale \
+    || warn "Tailscale installation failed — continuing (optional)"
+fi
+
+# ── STEP 4 — DIRECTORIES ──────────────────────────────────────
+log "Step 4/9 — Creating node directories"
+
+sudo -u "$REAL_USER" mkdir -p \
+  "$TURTLE_DIR" \
+  "$TURTLE_DATA/identity" \
+  "$TURTLE_DATA/data" \
+  "$TURTLE_DATA/logs" \
+  "$TURTLE_DATA/conversations"
+
+log "Node directories created at $TURTLE_DIR"
+
+# ── STEP 5 — FLEET MANIFEST ───────────────────────────────────
+log "Step 5/9 — Pulling fleet manifest"
+
+MANIFEST_URL="https://install.turtleshell.ai"
+
+# Retry with backoff
+pull_with_retry() {
+  local url="$1"
+  local dest="$2"
+  local attempts=3
+  local delay=5
+
+  for i in $(seq 1 $attempts); do
+    if sudo -u "$REAL_USER" curl -fsSL \
+        --connect-timeout 10 \
+        --max-time 30 \
+        "$url" -o "$dest" 2>/dev/null; then
+      return 0
+    fi
+    warn "Attempt $i failed for $url — retrying in ${delay}s..."
+    sleep $delay
+    delay=$((delay * 2))
+  done
+  fail "Failed to pull $url after $attempts attempts"
+}
+
+pull_with_retry \
+  "$MANIFEST_URL/docker-compose.yml" \
+  "$TURTLE_DIR/docker-compose.yml"
+
+# Only pull .env if it doesn't already exist (preserve user config)
+if [ ! -f "$TURTLE_DIR/.env" ]; then
+  pull_with_retry \
+    "$MANIFEST_URL/.env.example" \
+    "$TURTLE_DIR/.env"
+  log "Fleet manifest downloaded"
+else
+  log ".env already exists — preserving existing configuration"
+fi
+
+# ── STEP 6 — NODE IDENTITY ────────────────────────────────────
+log "Step 6/9 — Generating node identity"
+
+# Only generate if not already set
+if grep -q "^NODE_ID=$" "$TURTLE_DIR/.env" 2>/dev/null || \
+   ! grep -q "NODE_ID" "$TURTLE_DIR/.env" 2>/dev/null; then
+
+  NODE_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+  JWT_SECRET=$(openssl rand -hex 32)
+  COOKIE_SECRET=$(openssl rand -hex 32)
+
+  # Write into .env using sed (macOS compatible)
+  sed -i '' "s|^NODE_ID=.*|NODE_ID=$NODE_ID|" "$TURTLE_DIR/.env"
+  sed -i '' "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" "$TURTLE_DIR/.env"
+  sed -i '' "s|^COOKIE_SECRET=.*|COOKIE_SECRET=$COOKIE_SECRET|" "$TURTLE_DIR/.env"
+
+  log "Node ID generated: $NODE_ID"
+else
+  NODE_ID=$(grep "^NODE_ID=" "$TURTLE_DIR/.env" | cut -d= -f2)
+  log "Node ID already exists: $NODE_ID — preserving"
+fi
+
+# Write Cosmos-Logos node manifest
+NODE_NAME="$(scutil --get ComputerName 2>/dev/null || echo "My TurtleShell Node")"
+INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+sudo -u "$REAL_USER" tee "$TURTLE_DATA/manifest.json" > /dev/null <<EOF
+{
+  "node_id": "$NODE_ID",
+  "node_name": "$NODE_NAME",
+  "version": "1.7.0",
+  "installed_at": "$INSTALLED_AT",
+  "architecture": "$ARCH",
+  "connection_mode": "local",
+  "ares_port": 3451,
+  "dashboard_port": 3000,
+  "cosmos_logos_version": "1.0.3",
+  "platform": "macos"
+}
+EOF
+
+# Write node ID shortcut
+echo "$NODE_ID" > "$TURTLE_DATA/.node_id"
+chown "$REAL_USER" "$TURTLE_DATA/.node_id"
+
+log "Cosmos-Logos manifest written"
+
+# ── STEP 7 — PULL FLEET IMAGES ────────────────────────────────
+log "Step 7/9 — Pulling fleet images (this may take a few minutes...)"
+
+cd "$TURTLE_DIR"
+
+sudo -u "$REAL_USER" docker compose pull \
+  || fail "Failed to pull fleet images. Check your internet connection."
+
+log "Fleet images pulled"
+
+# ── STEP 8 — START FLEET ──────────────────────────────────────
+log "Step 8/9 — Starting fleet"
+
+sudo -u "$REAL_USER" docker compose up -d \
+  || fail "Failed to start fleet"
+
+# Wait for health checks
+log "Waiting for fleet health..."
+TIMEOUT=60
+ELAPSED=0
+until sudo -u "$REAL_USER" docker compose ps \
+    --format json 2>/dev/null | \
+    grep -q '"Health":"healthy"' || [ $ELAPSED -ge $TIMEOUT ]; do
+  sleep 3
+  ELAPSED=$((ELAPSED + 3))
+done
+
+if [ $ELAPSED -ge $TIMEOUT ]; then
+  warn "Health check timeout — fleet may still be starting"
+  warn "Check status with: cd ~/turtleshell && docker compose ps"
+else
+  log "Fleet healthy"
+fi
+
+# ── STEP 9 — OPEN DASHBOARD ───────────────────────────────────
+log "Step 9/9 — Opening TurtleShell dashboard"
+
+# Brief pause for web server to be ready
+sleep 3
+
+sudo -u "$REAL_USER" open "http://localhost:3000" \
+  || warn "Could not open browser — navigate to http://localhost:3000"
+
+# ── COMPLETION ────────────────────────────────────────────────
+log "=============================================="
+log "Installation complete"
+log "Node ID:    $NODE_ID"
+log "Node Name:  $NODE_NAME"
+log "Dashboard:  http://localhost:3000"
+log "API:        http://localhost:3451"
+log "Data:       $TURTLE_DATA"
+log "Logs:       $LOG"
+log ""
+log "To connect your iPhone:"
+log "  Open TurtleShell.ai on iOS"
+log "  Tap Connect to Node"
+log "  Enter Node ID: $NODE_ID"
+log ""
+log "To manage your fleet:"
+log "  cd ~/turtleshell"
+log "  docker compose ps      # status"
+log "  docker compose stop    # stop"
+log "  docker compose up -d   # start"
+log "  docker compose pull && docker compose up -d  # update"
+log "=============================================="
 
 exit 0

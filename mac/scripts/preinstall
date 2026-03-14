@@ -1,40 +1,59 @@
 #!/bin/bash
-# preinstall — TurtleShell.ai Node Installer
-# Runs before installation begins
-# Exit non-zero to abort installation
+# =============================================================
+# TurtleShell.ai — preinstall system check
+# Runs before installation begins. Exit non-zero to abort.
+# =============================================================
 
-set -e
+set -euo pipefail
 
-echo "Checking system requirements..."
+LOG=/var/log/turtleshell-install.log
+mkdir -p "$(dirname $LOG)"
 
-# macOS version check
+log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ $1" | tee -a "$LOG"; }
+fail() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ $1" | tee -a "$LOG"; exit 1; }
+warn() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠ $1" | tee -a "$LOG"; }
+
+log "TurtleShell.ai — Pre-install system check"
+
+# macOS version
 OS_VERSION=$(sw_vers -productVersion | cut -d. -f1)
 if [ "$OS_VERSION" -lt 13 ]; then
-  echo "ERROR: TurtleShell.ai requires macOS 13 (Ventura) or later."
-  echo "Your version: $(sw_vers -productVersion)"
-  exit 1
+  fail "macOS 13 (Ventura) or later required. Found: $(sw_vers -productVersion)"
 fi
+log "macOS $(sw_vers -productVersion) — OK"
 
-# RAM check (8GB minimum = 8589934592 bytes)
+# RAM (8GB = 8589934592 bytes)
 RAM=$(sysctl -n hw.memsize)
 if [ "$RAM" -lt 8589934592 ]; then
-  echo "ERROR: TurtleShell.ai requires 8GB RAM minimum."
-  exit 1
+  fail "8GB RAM required. Found: $((RAM / 1024 / 1024 / 1024))GB"
 fi
+log "RAM: $((RAM / 1024 / 1024 / 1024))GB — OK"
 
-# Disk space check (20GB = 21474836480 bytes)
-FREE_DISK=$(df -k ~ | tail -1 | awk '{print $4}')
-FREE_BYTES=$((FREE_DISK * 1024))
+# Disk (20GB = 21474836480 bytes)
+FREE_KB=$(df -k "$HOME" | tail -1 | awk '{print $4}')
+FREE_BYTES=$((FREE_KB * 1024))
 if [ "$FREE_BYTES" -lt 21474836480 ]; then
-  echo "ERROR: TurtleShell.ai requires 20GB free disk space."
-  exit 1
+  fail "20GB free disk required. Found: $((FREE_BYTES / 1024 / 1024 / 1024))GB"
+fi
+log "Disk: $((FREE_BYTES / 1024 / 1024 / 1024))GB free — OK"
+
+# Internet
+if ! curl -fsSL --max-time 8 \
+    https://install.turtleshell.ai/health &>/dev/null; then
+  warn "install.turtleshell.ai unreachable — checking general connectivity..."
+  if ! curl -fsSL --max-time 8 https://apple.com &>/dev/null; then
+    fail "No internet connection. Please connect and try again."
+  fi
+  warn "General internet OK but install server unreachable — continuing"
+fi
+log "Internet — OK"
+
+# Previous install detection
+if [ -f "$HOME/.turtleshell/.node_id" ]; then
+  EXISTING_ID=$(cat "$HOME/.turtleshell/.node_id")
+  warn "Existing installation detected (Node: $EXISTING_ID)"
+  warn "Reinstalling will preserve your .env and node identity"
 fi
 
-# Internet connectivity
-if ! curl -fsSL --max-time 5 https://install.turtleshell.ai/health &>/dev/null; then
-  echo "ERROR: No internet connection. Please connect and try again."
-  exit 1
-fi
-
-echo "System requirements met."
+log "All pre-install checks passed"
 exit 0
