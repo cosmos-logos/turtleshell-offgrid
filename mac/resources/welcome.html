@@ -1,12 +1,111 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Welcome — TurtleShell.ai</title>
+<meta charset="UTF-8"/>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: transparent;
+    color: #f4f0e8;
+    font-family: 'Helvetica Neue', sans-serif;
+    padding: 24px 28px;
+    height: 100%;
+  }
+
+  .eyebrow {
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #8a8070;
+    margin-bottom: 16px;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #3ddc84;
+    letter-spacing: -0.5px;
+    line-height: 1.1;
+    margin-bottom: 20px;
+  }
+
+  p {
+    font-size: 13px;
+    line-height: 1.7;
+    color: #f4f0e8;
+    margin-bottom: 14px;
+    opacity: 0.9;
+  }
+
+  .rule {
+    width: 40px;
+    height: 2px;
+    background: #3ddc84;
+    margin: 20px 0;
+    opacity: 0.6;
+  }
+
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: #f4f0e8;
+    opacity: 0.85;
+  }
+
+  .step-num {
+    color: #3ddc84;
+    font-weight: 700;
+    font-size: 11px;
+    min-width: 16px;
+    margin-top: 1px;
+  }
+
+  .req {
+    font-size: 11px;
+    color: #8a8070;
+    margin-top: 4px;
+  }
+</style>
 </head>
 <body>
-  <h1>Welcome to TurtleShell.ai</h1>
-  <p>This installer will set up the TurtleShell.ai sovereign node on your Mac.</p>
-  <p>Click Continue to begin.</p>
+  <p class="eyebrow">CloudPremise LLC</p>
+  <h1>TurtleShell.ai<br/>Sovereign Node</h1>
+
+  <p>
+    Your AI fleet. Your hardware. Your rules.
+    This installer sets up a complete sovereign AI
+    platform on your machine.
+  </p>
+
+  <div class="rule"></div>
+
+  <div class="step">
+    <span class="step-num">1</span>
+    <span>Docker Desktop installs and starts automatically</span>
+  </div>
+  <div class="step">
+    <span class="step-num">2</span>
+    <span>Tailscale installs for secure remote access</span>
+  </div>
+  <div class="step">
+    <span class="step-num">3</span>
+    <span>The TurtleShell fleet wakes up on Docker</span>
+  </div>
+  <div class="step">
+    <span class="step-num">4</span>
+    <span>Your browser opens to your sovereign dashboard</span>
+  </div>
+
+  <div class="rule"></div>
+
+  <p class="req">
+    macOS 13 or later &nbsp;·&nbsp; 8GB RAM &nbsp;·&nbsp; 20GB free disk<br/>
+    Installation takes approximately 5-10 minutes.<br/>
+    An internet connection is required.
+  </p>
 </body>
 </html>

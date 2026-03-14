@@ -1,6 +1,5 @@
 # Secrets — never commit
 mac/.build-config
-install/.env
 **/.env
 !**/.env.example
 

@@ -124,7 +124,7 @@ log "Node directories created at $TURTLE_DIR"
 # ── STEP 5 — FLEET MANIFEST ───────────────────────────────────
 log "Step 5/9 — Pulling fleet manifest"
 
-MANIFEST_URL="https://install.turtleshell.ai"
+MANIFEST_URL="https://turtleshell.ai/install"
 
 # Retry with backoff
 pull_with_retry() {

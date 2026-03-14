@@ -1,28 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-    <title>TurtleShell.ai Sovereign Node</title>
-    <organization>ai.turtleshell</organization>
-    <domains enable_localSystem="true"/>
-    <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
 
-    <!-- Placeholder Distribution.xml — Phase 1 scaffold only -->
-    <!-- Full implementation in PROMPT-006b -->
+  <title>TurtleShell.ai Sovereign Node</title>
+  <organization>ai.turtleshell</organization>
+  <domains enable_localSystem="true"/>
+  <options customize="never"
+           require-scripts="true"
+           rootVolumeOnly="true"/>
 
-    <welcome    file="welcome.html"/>
-    <license    file="license.html"/>
-    <conclusion file="conclusion.html"/>
-    <background file="background.png" mime-type="image/png" alignment="bottomleft" scaling="none"/>
+  <!-- Background -->
+  <background file="background.png"
+              alignment="bottomleft"
+              scaling="proportional"
+              mime-type="image/png"/>
+  <background-darkAqua file="background.png"
+                        alignment="bottomleft"
+                        scaling="proportional"
+                        mime-type="image/png"/>
 
-    <choices-outline>
-        <line choice="default">
-            <line choice="ai.turtleshell.installer.pkg"/>
-        </line>
-    </choices-outline>
+  <!-- Screens -->
+  <welcome file="welcome.html"
+           mime-type="text/html"/>
+  <license file="license.html"
+           mime-type="text/html"/>
+  <conclusion file="conclusion.html"
+              mime-type="text/html"/>
 
-    <choice id="default"/>
-    <choice id="ai.turtleshell.installer.pkg" visible="false">
-        <pkg-ref id="ai.turtleshell.installer.pkg"/>
-    </choice>
+  <!-- Package reference -->
+  <pkg-ref id="ai.turtleshell.installer"/>
 
-    <pkg-ref id="ai.turtleshell.installer.pkg" version="1.7.0" onConclusion="none">TurtleShell.pkg</pkg-ref>
+  <!-- Install choices -->
+  <choices-outline>
+    <line choice="default"/>
+  </choices-outline>
+
+  <choice id="default"
+          visible="false"
+          title="TurtleShell.ai Sovereign Node"
+          description="Installs the complete TurtleShell.ai fleet.">
+    <pkg-ref id="ai.turtleshell.installer"/>
+  </choice>
+
+  <pkg-ref id="ai.turtleshell.installer"
+           version="1.7.0"
+           onConclusion="none">TurtleShell-1.7.0-component.pkg</pkg-ref>
+
 </installer-gui-script>

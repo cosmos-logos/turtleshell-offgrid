@@ -39,8 +39,8 @@ log "Disk: $((FREE_BYTES / 1024 / 1024 / 1024))GB free — OK"
 
 # Internet
 if ! curl -fsSL --max-time 8 \
-    https://install.turtleshell.ai/health &>/dev/null; then
-  warn "install.turtleshell.ai unreachable — checking general connectivity..."
+    https://turtleshell.ai/install/health &>/dev/null; then
+  warn "turtleshell.ai/install unreachable — checking general connectivity..."
   if ! curl -fsSL --max-time 8 https://apple.com &>/dev/null; then
     fail "No internet connection. Please connect and try again."
   fi
