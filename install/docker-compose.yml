@@ -1,0 +1,227 @@
+# TurtleShell.ai Off-Grid Fleet Manifest
+# Version: 1.7.0
+# CloudPremise LLC — brain/1.7.x.x
+# Pulled by postinstall.sh at install time
+# Hosted at: install.turtleshell.ai/docker-compose.yml
+
+networks:
+  olympus-internal:
+    driver: bridge
+
+volumes:
+  turtleshell-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PROTEUS_DATA_PATH:-~/.turtleshell/data}
+
+services:
+
+  # ── ARES — API Gateway ─────────────────────────────────────
+  # Single external entry point. All traffic hits port 3451.
+  # ngrok and Tailscale connect here.
+  ares:
+    image: ghcr.io/olympus-616/ares:1.7.0
+    container_name: ares
+    restart: unless-stopped
+    ports:
+      - "3451:3451"
+    environment:
+      - NODE_ENV=${NODE_ENV:-local}
+      - PORT=3451
+      - ATHENA_URL=http://athena:3401
+      - HERMES_URL=http://hermes:3411
+      - MNEMOSYNE_URL=http://mnemosyne:3711
+      - PROTEUS_URL=http://proteus:3461
+      - PLUTUS_URL=http://plutus:3701
+      - ZEUS_URL=http://zeus:3481
+      - JWT_SECRET=${JWT_SECRET}
+      - COOKIE_SECRET=${COOKIE_SECRET}
+    networks:
+      - olympus-internal
+    depends_on:
+      athena:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3451/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── ATHENA — LLM Router ────────────────────────────────────
+  athena:
+    image: ghcr.io/olympus-616/athena:1.7.0
+    container_name: athena
+    restart: unless-stopped
+    ports:
+      - "3401:3401"
+    environment:
+      - NODE_ENV=${NODE_ENV:-local}
+      - PORT=3401
+      - ATHENA_AI_TYPE=${ATHENA_AI_TYPE:-openai}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GROK_API_KEY=${GROK_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - MCP_SERVER_URL=http://poseidon:3431/v1/poseidon/mcp/poc/mcp
+      - MNEMOSYNE_URL=http://mnemosyne:3711
+      - POSEIDON_URL=http://poseidon:3431
+      - PLUTUS_URL=http://plutus:3701
+      - JWT_SECRET=${JWT_SECRET}
+    networks:
+      - olympus-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3401/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── HERMES — CORS Proxy ────────────────────────────────────
+  hermes:
+    image: ghcr.io/olympus-616/hermes:1.7.0
+    container_name: hermes
+    restart: unless-stopped
+    ports:
+      - "3411:3411"
+    environment:
+      - NODE_ENV=${NODE_ENV:-local}
+      - PORT=3411
+    networks:
+      - olympus-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3411/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── MNEMOSYNE — Episodic Memory ────────────────────────────
+  mnemosyne:
+    image: ghcr.io/olympus-616/mnemosyne:1.7.0
+    container_name: mnemosyne
+    restart: unless-stopped
+    ports:
+      - "3711:3711"
+    environment:
+      - NODE_ENV=${NODE_ENV:-local}
+      - PORT=3711
+      - PROTEUS_URL=http://proteus:3461
+      - JWT_SECRET=${JWT_SECRET}
+    volumes:
+      - turtleshell-data:/data
+    networks:
+      - olympus-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3711/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── PROTEUS — Universal ORM ────────────────────────────────
+  proteus:
+    image: ghcr.io/olympus-616/proteus:1.7.0
+    container_name: proteus
+    restart: unless-stopped
+    ports:
+      - "3461:3461"
+    environment:
+      - NODE_ENV=${NODE_ENV:-local}
+      - PORT=3461
+      - PROTEUS_ADAPTER=${PROTEUS_ADAPTER:-localfile}
+      - PROTEUS_DATA_PATH=/data
+      - PROTEUS_BASE_PATH=/api/v1
+      - PROTEUS_NAMESPACE=default
+    volumes:
+      - turtleshell-data:/data
+    networks:
+      - olympus-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3461/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── POSEIDON — MCP Tool Server ─────────────────────────────
+  poseidon:
+    image: ghcr.io/olympus-616/poseidon:1.7.0
+    container_name: poseidon
+    restart: unless-stopped
+    ports:
+      - "3431:3431"
+    environment:
+      - NODE_ENV=${NODE_ENV:-local}
+      - PORT=3431
+      - JWT_SECRET=${JWT_SECRET}
+    networks:
+      - olympus-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3431/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── PLUTUS — Billing & Metering ────────────────────────────
+  plutus:
+    image: ghcr.io/olympus-616/plutus:1.7.0
+    container_name: plutus
+    restart: unless-stopped
+    ports:
+      - "3701:3701"
+    environment:
+      - NODE_ENV=${NODE_ENV:-local}
+      - PORT=3701
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - JWT_SECRET=${JWT_SECRET}
+    networks:
+      - olympus-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3701/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── ZEUS — Fleet Controller ────────────────────────────────
+  zeus:
+    image: ghcr.io/olympus-616/zeus:1.7.0
+    container_name: zeus
+    restart: unless-stopped
+    ports:
+      - "3481:3481"
+    environment:
+      - NODE_ENV=${NODE_ENV:-local}
+      - PORT=3481
+      - NODE_ID=${NODE_ID}
+      - NODE_NAME=${NODE_NAME:-My TurtleShell Node}
+      - JWT_SECRET=${JWT_SECRET}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - olympus-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3481/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── TURTLESHELL-WEB — Dashboard ────────────────────────────
+  turtleshell-web:
+    image: ghcr.io/olympus-616/turtleshell-web:1.7.0
+    container_name: turtleshell-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=${NODE_ENV:-local}
+      - VITE_API_URL=http://localhost:3451
+    networks:
+      - olympus-internal
+    depends_on:
+      ares:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
