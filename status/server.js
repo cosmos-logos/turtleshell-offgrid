@@ -484,7 +484,26 @@ app.get('/api/history', async (req, res) => {
 // ── PAGE ROUTES ────────────────────────────────────────────
 
 // Redirect root
-app.get('/', (req, res) => res.redirect('/nodestatus'))
+// ── REACT SPA (TurtleShell Web UI) ─────────────────────────
+// Serves the built React app. The /app/* routes are handled client-side.
+// API routes (/v1/*, /api/*, /health, /connect/*) take priority above.
+const WEB_DIR = path.join(__dirname, 'web')
+if (fs.existsSync(path.join(WEB_DIR, 'index.html'))) {
+  app.use(express.static(WEB_DIR, { index: false }))
+  // SPA fallback — serve index.html for /app/* routes
+  app.get('/app/*', (req, res) => {
+    res.sendFile(path.join(WEB_DIR, 'index.html'))
+  })
+  // Root redirects to the React app
+  app.get('/', (req, res) => res.redirect('/app/chat'))
+  console.log('🌐 React SPA loaded from', WEB_DIR)
+} else {
+  app.get('/', (req, res) => res.redirect('/nodestatus'))
+  console.log('⚠️ No React SPA found — falling back to admin dashboard')
+}
+
+// ── ADMIN DASHBOARD (legacy server-rendered pages) ─────────
+// These remain accessible for fleet administration
 
 // Status endpoint (machine-readable, like other services)
 app.get('/status', (req, res) => {
