@@ -1,117 +1,47 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8"/>
+<meta name="color-scheme" content="light"/>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    background: transparent;
-    color: #f4f0e8;
-    font-family: 'Helvetica Neue', sans-serif;
-    padding: 24px 28px;
-    height: 100%;
-  }
-  .eyebrow {
-    font-size: 10px;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    color: #8a8070;
-    margin-bottom: 16px;
-  }
-  h1 {
-    font-size: 26px;
-    font-weight: 700;
-    color: #3ddc84;
-    line-height: 1.15;
-    margin-bottom: 20px;
-  }
-  p {
-    font-size: 13px;
-    line-height: 1.7;
-    color: #f4f0e8;
-    margin-bottom: 12px;
-    opacity: 0.9;
-  }
-  .rule {
-    width: 40px;
-    height: 2px;
-    background: #3ddc84;
-    margin: 20px 0;
-    opacity: 0.6;
-  }
-  .cmd {
-    font-family: 'Courier New', monospace;
-    font-size: 11px;
-    color: #3ddc84;
-    background: rgba(61,220,132,.08);
-    padding: 2px 6px;
-    border-radius: 3px;
-  }
-  .step {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    margin-bottom: 10px;
-    font-size: 12px;
-    opacity: 0.85;
-  }
-  .dot {
-    color: #3ddc84;
-    font-size: 16px;
-    line-height: 1;
-    min-width: 12px;
-  }
-  .quote {
-    font-style: italic;
-    font-size: 12px;
-    color: #8a8070;
-    margin-top: 20px;
-    line-height: 1.8;
-  }
+body {
+  font-family: -apple-system, sans-serif;
+  padding: 20px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.sub { color: #666; font-size: 12px; margin-bottom: 16px; }
+p { margin-bottom: 12px; }
+.section { font-weight: 600; font-size: 12px; margin: 16px 0 6px; }
+ul { padding-left: 20px; margin-bottom: 12px; }
+li { margin-bottom: 4px; }
+.quote { font-style: italic; color: #888; font-size: 12px; margin-top: 16px; border-top: 1px solid #ddd; padding-top: 12px; line-height: 1.8; }
 </style>
 </head>
 <body>
-  <p class="eyebrow">Installation complete</p>
-  <h1>The grid<br/>is live.</h1>
+<h1>Installation Complete</h1>
+<p class="sub">Your sovereign node is live · CloudPremise LLC</p>
 
-  <p>
-    Your TurtleShell node is running. Your browser
-    will open to your sovereign dashboard automatically.
-  </p>
+<p>Your TurtleShell.ai Off-Grid dashboard is now running. Your browser will open automatically.</p>
 
-  <div class="rule"></div>
+<p class="section">Connect your iPhone:</p>
+<ul>
+  <li>Open TurtleShell.ai on iOS</li>
+  <li>Tap Connect to Node</li>
+  <li>Enter your Node ID from the dashboard</li>
+</ul>
 
-  <div class="step">
-    <span class="dot">&#x2B25;</span>
-    <span>Open TurtleShell.ai on your iPhone</span>
-  </div>
-  <div class="step">
-    <span class="dot">&#x2B25;</span>
-    <span>Tap <strong>Connect to Node</strong></span>
-  </div>
-  <div class="step">
-    <span class="dot">&#x2B25;</span>
-    <span>Enter your Node ID shown in the dashboard</span>
-  </div>
+<p class="section">Manage your fleet:</p>
+<ul>
+  <li>Dashboard: http://localhost:717</li>
+  <li>API: http://localhost:3451/v1/athena</li>
+</ul>
 
-  <div class="rule"></div>
-
-  <p>To manage your fleet:</p>
-  <div class="step">
-    <span class="dot">&#x2B25;</span>
-    <span><span class="cmd">cd ~/turtleshell</span>
-    then <span class="cmd">docker compose ps</span></span>
-  </div>
-  <div class="step">
-    <span class="dot">&#x2B25;</span>
-    <span>Or use the dashboard at
-    <span class="cmd">localhost:3000</span></span>
-  </div>
-
-  <p class="quote">
-    "Let the story be true.<br/>
-     Let the turtle do its work.<br/>
-     Do the work you had been assigned."
-  </p>
+<p class="quote">
+"Let the story be true.<br/>
+Let the turtle do its work.<br/>
+Do the work you had been assigned."
+</p>
 </body>
 </html>

@@ -6,7 +6,7 @@
   <domains enable_localSystem="true"/>
   <options customize="never"
            require-scripts="true"
-           rootVolumeOnly="true"/>
+           hostArchitectures="arm64,x86_64"/>
 
   <!-- Background -->
   <background file="background.png"
