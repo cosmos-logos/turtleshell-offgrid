@@ -65,12 +65,17 @@ jobs:
       - name: Sign and notarize
         run: cd mac && bash sign.sh
 
-      - name: Generate checksum
+      - name: Rename to stable filenames and generate checksum
         run: |
           cd mac/build
+          VERSION="${{ steps.version.outputs.version }}"
           PKG=$(ls TurtleShell-*.pkg | grep -v unsigned | grep -v component | head -1)
+          # Copy versioned file as the stable download name
+          cp "$PKG" "TurtleShell.pkg"
+          shasum -a 256 "TurtleShell.pkg" > "TurtleShell.pkg.sha256"
+          # Also keep the versioned copy for the release
           shasum -a 256 "$PKG" > "${PKG}.sha256"
-          echo "PKG_FILE=$PKG" >> $GITHUB_ENV
+          echo "VERSIONED_PKG=$PKG" >> $GITHUB_ENV
 
       # Upload as workflow artifact (available for 90 days)
       - name: Upload artifact
@@ -78,12 +83,15 @@ jobs:
         with:
           name: macos-installer
           path: |
+            mac/build/TurtleShell.pkg
+            mac/build/TurtleShell.pkg.sha256
             mac/build/TurtleShell-*.pkg
             mac/build/TurtleShell-*.sha256
           retention-days: 90
 
-      # Create GitHub Release with the signed .pkg attached
-      # Download links on turtleshell.ai point to these release assets
+      # Create GitHub Release with both stable and versioned files
+      # turtleshell.ai links to TurtleShell.pkg (stable name, always latest)
+      # Versioned files preserved in each release for history
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -94,11 +102,13 @@ jobs:
 
             Signed and notarized macOS installer.
 
-            **Install:** Download `${{ env.PKG_FILE }}` and double-click to install.
+            **Install:** Download [TurtleShell.pkg](https://github.com/cosmos-logos/turtleshell-offgrid/releases/latest/download/TurtleShell.pkg) and double-click.
 
-            **Verify:** `shasum -a 256 -c ${{ env.PKG_FILE }}.sha256`
+            **Verify:** `shasum -a 256 -c TurtleShell.pkg.sha256`
           files: |
-            mac/build/TurtleShell-*.pkg
-            mac/build/TurtleShell-*.sha256
+            mac/build/TurtleShell.pkg
+            mac/build/TurtleShell.pkg.sha256
+            mac/build/${{ env.VERSIONED_PKG }}
+            mac/build/${{ env.VERSIONED_PKG }}.sha256
           draft: false
           prerelease: false
