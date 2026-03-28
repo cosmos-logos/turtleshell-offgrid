@@ -338,7 +338,7 @@ ${extraHead}
         var proto=location.protocol==='https:'?'https':'http';
         var url=proto+'://'+h+':'+location.port+'/v1/athena';
         document.getElementById('athenaUrl').textContent=url;
-        document.getElementById('qrUrl').textContent=url;
+        document.getElementById('qrUrl').textContent='Scan to connect via turtleshell.ai';
         fetch('/api/qr?host='+h).then(r=>r.text()).then(svg=>{
           document.getElementById('qrImage').innerHTML=svg;
         });
@@ -373,9 +373,10 @@ app.get('/api/qr', async (req, res) => {
   const host = req.query.host || req.hostname || 'localhost'
   const httpsEnabled = fs.existsSync(path.join(CERT_DIR, 'node-cert.pem'))
   const scheme = httpsEnabled ? 'https' : 'http'
-  const url = `${scheme}://${host}:${PORT}/v1/athena`
+  const agentUrl = `${scheme}://${host}:${PORT}/v1/athena`
+  const deepLink = `https://turtleshell.ai/app/agents?connect=${encodeURIComponent(agentUrl)}`
   try {
-    const svg = await QRCode.toString(url, {
+    const svg = await QRCode.toString(deepLink, {
       type: 'svg',
       color: { dark: '#4ade80', light: '#00000000' },
       margin: 0,
