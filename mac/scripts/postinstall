@@ -1,0 +1,453 @@
+#!/bin/bash
+# =============================================================
+# TurtleShell.ai Sovereign Node Installer — postinstall
+# CloudPremise LLC — brain/1.7.x.x
+# Runs as root after wizard Install click
+# =============================================================
+
+set -euo pipefail
+
+# Ensure PATH includes standard tool locations (installer has minimal PATH)
+export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
+# ── LOGGING ──────────────────────────────────────────────────
+LOG=/var/log/turtleshell-install.log
+mkdir -p "$(dirname $LOG)"
+
+log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ $1" | tee -a "$LOG"; }
+warn() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠ $1" | tee -a "$LOG"; }
+fail() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ $1" | tee -a "$LOG"; exit 1; }
+
+log "=============================================="
+log "TurtleShell.ai Sovereign Node Installer v1.7.1"
+log "CloudPremise LLC"
+log "=============================================="
+
+# ── ENVIRONMENT ───────────────────────────────────────────────
+# Running as root during install — resolve the real user
+REAL_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "${SUDO_USER:-$USER}")
+REAL_HOME=$(eval echo "~$REAL_USER")
+TURTLE_DIR="$REAL_HOME/turtleshell"
+TURTLE_DATA="$REAL_HOME/.turtleshell"
+ARCH=$(uname -m)
+
+log "User: $REAL_USER"
+log "Home: $REAL_HOME"
+log "Architecture: $ARCH"
+
+# ── STEP 1 — DOCKER ───────────────────────────────────────────
+log "Step 1/10 — Docker Desktop"
+
+DOCKER="/usr/local/bin/docker"
+[ -x "$DOCKER" ] || DOCKER=$(which docker 2>/dev/null || true)
+
+if [ -n "$DOCKER" ] && [ -x "$DOCKER" ] && "$DOCKER" info &>/dev/null 2>&1; then
+  log "Docker already running — skipping install"
+else
+  if [ ! -d "/Applications/Docker.app" ]; then
+    # Install Rosetta first (needed for Docker on Apple Silicon)
+    if [ "$ARCH" = "arm64" ]; then
+      log "Installing Rosetta..."
+      softwareupdate --install-rosetta --agree-to-license 2>>"$LOG" || true
+    fi
+
+    log "Downloading Docker Desktop..."
+    DOCKER_DMG="/tmp/Docker.dmg"
+    if [ "$ARCH" = "arm64" ]; then
+      curl -fsSL -o "$DOCKER_DMG" \
+        "https://desktop.docker.com/mac/main/arm64/Docker.dmg" \
+        || fail "Docker Desktop download failed"
+    else
+      curl -fsSL -o "$DOCKER_DMG" \
+        "https://desktop.docker.com/mac/main/amd64/Docker.dmg" \
+        || fail "Docker Desktop download failed"
+    fi
+    log "Installing Docker Desktop..."
+    hdiutil attach "$DOCKER_DMG" -nobrowse -quiet
+    cp -R "/Volumes/Docker/Docker.app" "/Applications/Docker.app"
+    hdiutil detach "/Volumes/Docker" -quiet
+    rm -f "$DOCKER_DMG"
+
+    # Accept Docker Desktop license and configure for unattended use
+    sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/Library/Group Containers/group.com.docker"
+    sudo -u "$REAL_USER" tee "$REAL_HOME/Library/Group Containers/group.com.docker/settings-store.json" > /dev/null <<DSEOF
+{"acceptedTerms":true,"analyticsEnabled":false}
+DSEOF
+
+    log "Docker Desktop installed"
+  fi
+
+  DOCKER="/usr/local/bin/docker"
+
+  log "Starting Docker Desktop..."
+  sudo -u "$REAL_USER" open -a Docker
+
+  # Poll for Docker daemon — 300 second timeout (first launch is slow)
+  log "Waiting for Docker daemon (first launch may take a minute)..."
+  TIMEOUT=300
+  ELAPSED=0
+  until [ -S /var/run/docker.sock ] || [ -S "$REAL_HOME/.docker/run/docker.sock" ]; do
+    sleep 5
+    ELAPSED=$((ELAPSED + 5))
+    if [ $ELAPSED -ge $TIMEOUT ]; then
+      fail "Docker daemon did not start within ${TIMEOUT}s. Please start Docker manually and re-run."
+    fi
+  done
+  # Extra pause for API readiness after socket appears
+  sleep 10
+fi
+
+DOCKER_VERSION=$("$DOCKER" --version 2>/dev/null || echo "Docker installed")
+log "Docker ready: $DOCKER_VERSION"
+
+# ── STEP 2 — OLLAMA ──────────────────────────────────────────
+log "Step 2/10 — Ollama (Local LLM)"
+
+if [ -d "/Applications/Ollama.app" ] || command -v ollama &>/dev/null; then
+  log "Ollama already installed — skipping"
+else
+  log "Installing Ollama..."
+  curl -fsSL https://ollama.com/install.sh | sh 2>>"$LOG" \
+    || warn "Ollama install script failed — trying direct download"
+  if [ ! -d "/Applications/Ollama.app" ]; then
+    warn "Ollama installation incomplete — you can install manually from ollama.com"
+  fi
+fi
+
+# Start Ollama and pull default model
+if [ -d "/Applications/Ollama.app" ]; then
+  sudo -u "$REAL_USER" open -a Ollama 2>/dev/null || true
+  sleep 3
+  if command -v ollama &>/dev/null || [ -x /usr/local/bin/ollama ]; then
+    OLLAMA_BIN=$(command -v ollama 2>/dev/null || echo "/usr/local/bin/ollama")
+    log "Pulling default model (llama3.2:3b)..."
+    sudo -u "$REAL_USER" "$OLLAMA_BIN" pull llama3.2:3b 2>>"$LOG" \
+      && log "Model llama3.2:3b ready" \
+      || warn "Model pull failed — you can run 'ollama pull llama3.2:3b' later"
+  fi
+fi
+
+# ── STEP 3 — TAILSCALE ────────────────────────────────────────
+log "Step 3/10 — Tailscale"
+
+if [ -d "/Applications/Tailscale.app" ] || command -v tailscale &>/dev/null; then
+  log "Tailscale already installed — skipping"
+else
+  log "Downloading Tailscale..."
+  TS_ZIP="/tmp/Tailscale.zip"
+  curl -fsSL -o "$TS_ZIP" \
+    "https://pkgs.tailscale.com/stable/Tailscale-latest-macos.zip" 2>/dev/null \
+    && {
+      unzip -qo "$TS_ZIP" -d /tmp/Tailscale-extract
+      cp -R /tmp/Tailscale-extract/Tailscale.app /Applications/Tailscale.app 2>/dev/null \
+        || cp -R /tmp/Tailscale-extract/*/Tailscale.app /Applications/Tailscale.app 2>/dev/null
+      rm -rf "$TS_ZIP" /tmp/Tailscale-extract
+      log "Tailscale installed"
+    } \
+    || warn "Tailscale download failed — continuing (optional)"
+fi
+
+# ── STEP 4 — NGROK ───────────────────────────────────────────
+log "Step 4/10 — ngrok (remote tunnel)"
+
+NGROK_BIN="$REAL_HOME/bin/ngrok"
+if [ -x "$NGROK_BIN" ] || command -v ngrok &>/dev/null; then
+  log "ngrok already installed — skipping"
+else
+  log "Installing ngrok..."
+  NGROK_ZIP="/tmp/ngrok.zip"
+  if [ "$ARCH" = "arm64" ]; then
+    curl -fsSL -o "$NGROK_ZIP" \
+      "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-darwin-arm64.zip" 2>/dev/null
+  else
+    curl -fsSL -o "$NGROK_ZIP" \
+      "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-darwin-amd64.zip" 2>/dev/null
+  fi
+  if [ -f "$NGROK_ZIP" ]; then
+    sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/bin"
+    cd /tmp && unzip -qo "$NGROK_ZIP" && mv ngrok "$REAL_HOME/bin/ngrok"
+    chmod +x "$REAL_HOME/bin/ngrok"
+    chown "$REAL_USER" "$REAL_HOME/bin/ngrok"
+    rm -f "$NGROK_ZIP"
+    log "ngrok installed to $REAL_HOME/bin/ngrok"
+  else
+    warn "ngrok download failed — you can install manually from ngrok.com"
+  fi
+fi
+
+# ── STEP 5 — DIRECTORIES ──────────────────────────────────────
+log "Step 5/10 — Creating node directories"
+
+sudo -u "$REAL_USER" mkdir -p \
+  "$TURTLE_DIR" \
+  "$TURTLE_DIR/olympus-config" \
+  "$TURTLE_DATA/identity" \
+  "$TURTLE_DATA/data" \
+  "$TURTLE_DATA/logs" \
+  "$TURTLE_DATA/conversations"
+
+# Create Hermes god proxy config — maps service names to Docker hostnames
+sudo -u "$REAL_USER" tee "$TURTLE_DIR/olympus-config/.env" > /dev/null <<'GODEOF'
+# Hermes god proxy route table
+ATHENA_API=http://athena:3401
+HERMES_API=http://hermes:3411
+POSEIDON_API=http://poseidon:3431
+MNEMOSYNE_API=http://mnemosyne:3711
+PLUTUS_API=http://plutus:3701
+ZEUS_API=http://zeus:3481
+PROTEUS_API=http://proteus:3461
+PROMETHEUS_API=http://prometheus:3741
+GODEOF
+sudo -u "$REAL_USER" touch "$TURTLE_DIR/olympus-config/pantheon.json"
+
+log "Node directories created at $TURTLE_DIR"
+
+# ── STEP 6 — FLEET MANIFEST ───────────────────────────────────
+log "Step 6/10 — Pulling fleet manifest"
+
+MANIFEST_URL="https://turtleshell.ai/install"
+
+# Retry with backoff
+pull_with_retry() {
+  local url="$1"
+  local dest="$2"
+  local attempts=3
+  local delay=5
+
+  for i in $(seq 1 $attempts); do
+    if sudo -u "$REAL_USER" curl -fsSL \
+        --connect-timeout 10 \
+        --max-time 30 \
+        "$url" -o "$dest" 2>/dev/null; then
+      return 0
+    fi
+    warn "Attempt $i failed for $url — retrying in ${delay}s..."
+    sleep $delay
+    delay=$((delay * 2))
+  done
+  fail "Failed to pull $url after $attempts attempts"
+}
+
+pull_with_retry \
+  "$MANIFEST_URL/docker-compose.yml" \
+  "$TURTLE_DIR/docker-compose.yml"
+
+# Only pull .env if it doesn't already exist (preserve user config)
+if [ ! -f "$TURTLE_DIR/.env" ]; then
+  pull_with_retry \
+    "$MANIFEST_URL/env.example" \
+    "$TURTLE_DIR/.env"
+  log "Fleet manifest downloaded"
+else
+  log ".env already exists — preserving existing configuration"
+fi
+
+# ── STEP 7 — NODE IDENTITY ────────────────────────────────────
+log "Step 7/10 — Generating node identity"
+
+# Only generate if not already set
+if grep -q "^NODE_ID=$" "$TURTLE_DIR/.env" 2>/dev/null || \
+   ! grep -q "NODE_ID" "$TURTLE_DIR/.env" 2>/dev/null; then
+
+  NODE_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+  JWT_SECRET=$(openssl rand -hex 32)
+  COOKIE_SECRET=$(openssl rand -hex 32)
+
+  # Write into .env using sed (macOS compatible)
+  sed -i '' "s|^NODE_ID=.*|NODE_ID=$NODE_ID|" "$TURTLE_DIR/.env"
+  sed -i '' "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" "$TURTLE_DIR/.env"
+  sed -i '' "s|^COOKIE_SECRET=.*|COOKIE_SECRET=$COOKIE_SECRET|" "$TURTLE_DIR/.env"
+
+  log "Node ID generated: $NODE_ID"
+else
+  NODE_ID=$(grep "^NODE_ID=" "$TURTLE_DIR/.env" | cut -d= -f2)
+  log "Node ID already exists: $NODE_ID — preserving"
+fi
+
+# Write Cosmos-Logos node manifest
+NODE_NAME="$(scutil --get ComputerName 2>/dev/null || echo "My TurtleShell Node")"
+INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+sudo -u "$REAL_USER" tee "$TURTLE_DATA/manifest.json" > /dev/null <<EOF
+{
+  "node_id": "$NODE_ID",
+  "node_name": "$NODE_NAME",
+  "version": "1.7.1",
+  "installed_at": "$INSTALLED_AT",
+  "architecture": "$ARCH",
+  "connection_mode": "local",
+  "ares_port": 3451,
+  "dashboard_port": 717,
+  "cosmos_logos_version": "1.0.3",
+  "platform": "macos"
+}
+EOF
+
+# Write node ID shortcut
+echo "$NODE_ID" > "$TURTLE_DATA/.node_id"
+chown "$REAL_USER" "$TURTLE_DATA/.node_id"
+
+log "Cosmos-Logos manifest written"
+
+# ── STEP 8 — PULL FLEET IMAGES ────────────────────────────────
+log "Step 8/10 — Pulling fleet images (this may take a few minutes...)"
+
+cd "$TURTLE_DIR"
+
+# Authenticate with container registry
+log "Authenticating with container registry..."
+REGISTRY_TOKEN=$(curl -fsSL --connect-timeout 10 --max-time 15 \
+  "$MANIFEST_URL/registry-token" 2>/dev/null || true)
+
+if [ -n "$REGISTRY_TOKEN" ]; then
+  # Write auth directly to Docker config — bypass credential store
+  DOCKER_CFG="$REAL_HOME/.docker"
+  sudo -u "$REAL_USER" mkdir -p "$DOCKER_CFG"
+  AUTH_B64=$(printf "turtleshell-installer:%s" "$REGISTRY_TOKEN" | base64)
+  python3 -c "
+import json, os
+cfg_path = '$DOCKER_CFG/config.json'
+try:
+    cfg = json.load(open(cfg_path))
+except:
+    cfg = {}
+cfg.setdefault('auths', {})['ghcr.io'] = {'auth': '$AUTH_B64'}
+cfg.pop('credsStore', None)
+json.dump(cfg, open(cfg_path, 'w'), indent=2)
+" && log "Registry authenticated" \
+    || warn "Registry auth config failed"
+  chown -R "$REAL_USER" "$DOCKER_CFG"
+else
+  warn "No registry token found — trying anonymous pull"
+fi
+
+sudo -u "$REAL_USER" "$DOCKER" compose pull \
+  || fail "Failed to pull fleet images. Check your internet connection."
+
+log "Fleet images pulled"
+
+# ── STEP 9 — START FLEET ──────────────────────────────────────
+log "Step 9/10 — Starting fleet"
+
+sudo -u "$REAL_USER" "$DOCKER" compose up -d 2>>"$LOG" \
+  || warn "Some services failed to start — ports may be in use. Run 'cd ~/turtleshell && docker compose up -d' after freeing ports."
+
+# Wait for health checks
+log "Waiting for fleet health..."
+TIMEOUT=60
+ELAPSED=0
+until sudo -u "$REAL_USER" "$DOCKER" compose ps \
+    --format json 2>/dev/null | \
+    grep -q '"Health":"healthy"' || [ $ELAPSED -ge $TIMEOUT ]; do
+  sleep 3
+  ELAPSED=$((ELAPSED + 3))
+done
+
+if [ $ELAPSED -ge $TIMEOUT ]; then
+  warn "Health check timeout — fleet may still be starting"
+  warn "Check status with: cd ~/turtleshell && docker compose ps"
+else
+  log "Fleet healthy"
+fi
+
+# ── STEP 9.5 — LOCAL HTTPS CERTIFICATE ───────────────────────
+log "Step 9.5/10 — Generating local HTTPS certificate..."
+
+MKCERT_BIN="$REAL_HOME/bin/mkcert"
+if [ ! -x "$MKCERT_BIN" ]; then
+  log "Installing mkcert..."
+  sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/bin"
+  if [ "$ARCH" = "arm64" ]; then
+    curl -fsSL "https://dl.filippo.io/mkcert/latest?os=darwin&arch=arm64" -o "$MKCERT_BIN" 2>/dev/null
+  else
+    curl -fsSL "https://dl.filippo.io/mkcert/latest?os=darwin&arch=amd64" -o "$MKCERT_BIN" 2>/dev/null
+  fi
+  chmod +x "$MKCERT_BIN"
+  chown "$REAL_USER" "$MKCERT_BIN"
+fi
+
+if [ -x "$MKCERT_BIN" ]; then
+  # Install local CA into system keychain
+  sudo -u "$REAL_USER" "$MKCERT_BIN" -install 2>/dev/null || true
+
+  CERT_DIR="$TURTLE_DATA/certs"
+  sudo -u "$REAL_USER" mkdir -p "$CERT_DIR"
+
+  # Collect all local IPs
+  LOCAL_IPS=$(ifconfig | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}' | tr '\n' ' ')
+  PRIMARY_IP=$(ifconfig | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}' | head -1)
+
+  log "Local IPs: $LOCAL_IPS"
+
+  # Generate cert covering all local IPs + hostnames
+  sudo -u "$REAL_USER" "$MKCERT_BIN" \
+    -key-file  "$CERT_DIR/node-key.pem" \
+    -cert-file "$CERT_DIR/node-cert.pem" \
+    localhost 127.0.0.1 "$(hostname).local" $LOCAL_IPS 2>/dev/null
+
+  # Export rootCA for client distribution
+  CA_ROOT=$(sudo -u "$REAL_USER" "$MKCERT_BIN" -CAROOT 2>/dev/null)
+  if [ -f "$CA_ROOT/rootCA.pem" ]; then
+    sudo -u "$REAL_USER" cp "$CA_ROOT/rootCA.pem" "$CERT_DIR/rootCA.pem"
+    sudo -u "$REAL_USER" cp "$CA_ROOT/rootCA.pem" "$TURTLE_DIR/rootCA.pem"
+    log "Root CA ready for distribution"
+  fi
+
+  # Write TLS config
+  sudo -u "$REAL_USER" tee "$CERT_DIR/tls.json" > /dev/null <<TLSEOF
+{
+  "enabled": true,
+  "cert": "$CERT_DIR/node-cert.pem",
+  "key": "$CERT_DIR/node-key.pem",
+  "ca": "$CERT_DIR/rootCA.pem",
+  "primary_ip": "$PRIMARY_IP"
+}
+TLSEOF
+
+  # Update .env
+  {
+    echo "HTTPS_ENABLED=true"
+    echo "TLS_CERT_PATH=$CERT_DIR/node-cert.pem"
+    echo "TLS_KEY_PATH=$CERT_DIR/node-key.pem"
+    echo "NODE_PRIMARY_IP=$PRIMARY_IP"
+  } >> "$TURTLE_DIR/.env"
+
+  log "HTTPS certificate generated for: localhost $LOCAL_IPS"
+  log "Node reachable at: https://$PRIMARY_IP:717"
+else
+  echo "HTTPS_ENABLED=false" >> "$TURTLE_DIR/.env"
+  warn "mkcert installation failed — running HTTP only"
+fi
+
+# ── STEP 10 — OPEN DASHBOARD ────────────────────────────────
+# Brief pause for web server to be ready
+sleep 3
+
+sudo -u "$REAL_USER" open "http://localhost:717/connect" \
+  || warn "Could not open browser — navigate to http://localhost:717/connect"
+
+# ── COMPLETION ────────────────────────────────────────────────
+log "=============================================="
+log "Installation complete"
+log "Node ID:    $NODE_ID"
+log "Node Name:  $NODE_NAME"
+log "Connect:    http://localhost:717/connect"
+log "Dashboard:  http://localhost:717/nodestatus"
+log "API:        http://localhost:3451/v1/athena"
+log "Data:       $TURTLE_DATA"
+log "Logs:       $LOG"
+log ""
+log "To connect your iPhone:"
+log "  Open TurtleShell.ai on iOS"
+log "  Tap Connect to Node"
+log "  Enter Node ID: $NODE_ID"
+log ""
+log "To manage your fleet:"
+log "  cd ~/turtleshell"
+log "  docker compose ps      # status"
+log "  docker compose stop    # stop"
+log "  docker compose up -d   # start"
+log "  docker compose pull && docker compose up -d  # update"
+log "=============================================="
+
+exit 0

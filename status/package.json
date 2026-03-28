@@ -1,0 +1,13 @@
+{
+  "name": "turtleshell-status",
+  "version": "1.7.0",
+  "description": "TurtleShell.ai node status dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.0",
+    "qrcode": "^1.5.4"
+  }
+}
