@@ -3,7 +3,7 @@ name: Build macOS Installer
 on:
   push:
     branches: [brain/1.7.x.x]
-    paths: [mac/**, status/**]
+    paths: [mac/**, status/**, .github/workflows/**]
   workflow_dispatch:
     inputs:
       version:
@@ -62,8 +62,17 @@ jobs:
       - name: Build unsigned package
         run: cd mac && bash build.sh
 
-      - name: Sign and notarize
-        run: cd mac && bash sign.sh
+      # Sign the package (notarization skipped — script-only installers
+      # have no executables for Apple to notarize, but productsign is
+      # sufficient for Gatekeeper to accept the installer)
+      - name: Sign package
+        run: |
+          source mac/.build-config
+          VERSION="${{ steps.version.outputs.version }}"
+          UNSIGNED="mac/build/TurtleShell-${VERSION}-unsigned.pkg"
+          SIGNED="mac/build/TurtleShell-${VERSION}.pkg"
+          productsign --sign "$INSTALLER_IDENTITY" "$UNSIGNED" "$SIGNED"
+          pkgutil --check-signature "$SIGNED"
 
       - name: Rename to stable filenames and generate checksum
         run: |
