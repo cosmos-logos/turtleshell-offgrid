@@ -1,26 +1,25 @@
-name: Build macOS Installer
+name: Build & Deploy
 
 on:
   push:
     branches: [brain/1.7.x.x]
-    paths: [mac/**, status/**, .github/workflows/**]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version (e.g. 1.7.2)"
-        required: true
-        default: "1.7.2"
+        description: "Version (e.g. 1.7.1)"
+        required: false
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
-  build:
-    runs-on: macos-latest
+  # ── Job 1: Docker image → ghcr.io/cosmos-logos/turtleshell-offgrid ──
+  docker:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Determine version from input or package.json
       - name: Set version
         id: version
         run: |
@@ -31,7 +30,38 @@ jobs:
             echo "version=$VERSION" >> $GITHUB_OUTPUT
           fi
 
-      # Write .build-config from secrets
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          docker build -t ghcr.io/cosmos-logos/turtleshell-offgrid:${VERSION} \
+                       -t ghcr.io/cosmos-logos/turtleshell-offgrid:latest \
+                       -f status/Dockerfile status/
+          docker push ghcr.io/cosmos-logos/turtleshell-offgrid:${VERSION}
+          docker push ghcr.io/cosmos-logos/turtleshell-offgrid:latest
+
+  # ── Job 2: macOS .pkg installer → GitHub Release ────────────────────
+  installer:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(python3 -c "import json; print(json.load(open('status/package.json'))['version'])")
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
       - name: Write build config
         run: |
           cat > mac/.build-config <<EOF
@@ -44,7 +74,6 @@ jobs:
           PKG_NAME="TurtleShell"
           EOF
 
-      # Import Apple Developer ID Installer certificate
       - name: Import signing certificate
         run: |
           echo "${{ secrets.INSTALLER_CERT_P12 }}" | base64 --decode > /tmp/cert.p12
@@ -62,9 +91,6 @@ jobs:
       - name: Build unsigned package
         run: cd mac && bash build.sh
 
-      # Sign the package (notarization skipped — script-only installers
-      # have no executables for Apple to notarize, but productsign is
-      # sufficient for Gatekeeper to accept the installer)
       - name: Sign package
         run: |
           source mac/.build-config
@@ -79,14 +105,11 @@ jobs:
           cd mac/build
           VERSION="${{ steps.version.outputs.version }}"
           PKG=$(ls TurtleShell-*.pkg | grep -v unsigned | grep -v component | head -1)
-          # Copy versioned file as the stable download name
           cp "$PKG" "TurtleShell.pkg"
           shasum -a 256 "TurtleShell.pkg" > "TurtleShell.pkg.sha256"
-          # Also keep the versioned copy for the release
           shasum -a 256 "$PKG" > "${PKG}.sha256"
           echo "VERSIONED_PKG=$PKG" >> $GITHUB_ENV
 
-      # Upload as workflow artifact (available for 90 days)
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -98,9 +121,6 @@ jobs:
             mac/build/TurtleShell-*.sha256
           retention-days: 90
 
-      # Create GitHub Release with both stable and versioned files
-      # turtleshell.ai links to TurtleShell.pkg (stable name, always latest)
-      # Versioned files preserved in each release for history
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -109,9 +129,9 @@ jobs:
           body: |
             ## TurtleShell Off-Grid v${{ steps.version.outputs.version }}
 
-            Signed and notarized macOS installer.
+            **Docker:** `docker pull ghcr.io/cosmos-logos/turtleshell-offgrid:${{ steps.version.outputs.version }}`
 
-            **Install:** Download [TurtleShell.pkg](https://github.com/cosmos-logos/turtleshell-offgrid/releases/latest/download/TurtleShell.pkg) and double-click.
+            **macOS Installer:** Download [TurtleShell.pkg](https://github.com/cosmos-logos/turtleshell-offgrid/releases/latest/download/TurtleShell.pkg) and double-click.
 
             **Verify:** `shasum -a 256 -c TurtleShell.pkg.sha256`
           files: |
