@@ -476,6 +476,86 @@ app.get('/api/history', async (req, res) => {
   }
 })
 
+// ── KEY MANAGEMENT — Ed25519 keypair for cosmos-logos ──────
+
+const KEYS_DIR = path.join(HOME, '.turtleshell', 'keys')
+const MANIFEST_PATH = path.join(HOME, '.turtleshell', 'cosmos-logos.json')
+
+// GET /api/keys — current key status
+app.get('/api/keys', (req, res) => {
+  const hasPrivate = fs.existsSync(path.join(KEYS_DIR, 'athena.key'))
+  const hasPublic = fs.existsSync(path.join(KEYS_DIR, 'athena.pub'))
+  const hasManifest = fs.existsSync(MANIFEST_PATH)
+  let publicKey = null
+  let fingerprint = null
+  if (hasPublic) {
+    try {
+      publicKey = fs.readFileSync(path.join(KEYS_DIR, 'athena.pub'), 'utf8').trim()
+      const pubBytes = crypto.createHash('sha256').update(publicKey).digest('base64')
+      fingerprint = `SHA256:${pubBytes}`
+    } catch {}
+  }
+  res.json({ hasPrivate, hasPublic, hasManifest, publicKey, fingerprint })
+})
+
+// POST /api/keys/generate — generate new Ed25519 keypair + update manifest
+app.post('/api/keys/generate', async (req, res) => {
+  try {
+    fs.mkdirSync(KEYS_DIR, { recursive: true })
+
+    // Generate Ed25519 keypair using Node.js crypto
+    const { generateKeyPairSync } = crypto
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+    const pubPem = publicKey.export({ type: 'spki', format: 'pem' })
+    const privPem = privateKey.export({ type: 'pkcs8', format: 'pem' })
+
+    fs.writeFileSync(path.join(KEYS_DIR, 'athena.key'), privPem, { mode: 0o600 })
+    fs.writeFileSync(path.join(KEYS_DIR, 'athena.pub'), pubPem)
+
+    // Update cosmos-logos.json manifest with new public key
+    let manifest
+    if (fs.existsSync(MANIFEST_PATH)) {
+      manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'))
+    } else {
+      // Fetch current manifest from running Athena
+      try {
+        manifest = await fetchJSON(3401, '/.well-known/cosmos-logos.json')
+      } catch {
+        manifest = { cryptography: {} }
+      }
+    }
+    manifest.cryptography = manifest.cryptography || {}
+    manifest.cryptography.public_key = pubPem.trim()
+    const pubHash = crypto.createHash('sha256').update(pubPem.trim()).digest('base64')
+    manifest.cryptography.fingerprint = `SHA256:${pubHash}`
+
+    // Set network endpoint to this node's address
+    const ips = getLocalIPs()
+    const port = process.env.PORT || 717
+    manifest.network = manifest.network || {}
+    manifest.network.endpoint = `https://${ips[0]}:${port}/v1/athena`
+
+    fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
+
+    // Restart Athena container to pick up new key
+    const { execSync } = require('child_process')
+    try {
+      execSync('/usr/local/bin/docker restart athena', { timeout: 30000 })
+    } catch (e) {
+      console.error('Warning: could not restart athena container:', e.message)
+    }
+
+    res.json({
+      ok: true,
+      publicKey: pubPem.trim(),
+      fingerprint: `SHA256:${pubHash}`,
+      message: 'Keypair generated. Athena restarting with new key.'
+    })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // ── PAGE ROUTES ────────────────────────────────────────────
 
 // Redirect root
@@ -565,6 +645,10 @@ app.get('/nodestatus', async (req, res) => {
         ${serviceRows}
       </div>
       <div style="text-align:center;padding:16px;font-size:11px;color:#52525b">Click any service to view details &middot; Refreshes every 10 seconds</div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-hdr"><h3>🔐 Security — Ed25519 Keys</h3><span class="muted text-sm">cosmos-logos sealed envelope</span></div>
+        <div id="keyStatus" style="padding:16px 24px"><div class="muted">Loading key status...</div></div>
+      </div>
     </div>
     <div class="modal-overlay" id="detailModal" onclick="if(event.target===this)closeModal()">
       <div class="modal">
@@ -592,6 +676,51 @@ app.get('/nodestatus', async (req, res) => {
     }
     function closeModal(){document.getElementById('detailModal').classList.remove('open')}
     document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
+
+    // Key management
+    function loadKeyStatus(){
+      fetch('/api/keys').then(r=>r.json()).then(d=>{
+        const el=document.getElementById('keyStatus');
+        if(!d.hasPrivate||!d.hasPublic){
+          el.innerHTML='<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
+            +'<div style="flex:1;min-width:200px">'
+            +'<div style="color:#fbbf24;font-weight:600;margin-bottom:4px">No keypair found</div>'
+            +'<div class="text-sm muted">Generate an Ed25519 keypair to enable secure agent connections via cosmos-logos sealed envelopes.</div>'
+            +'</div>'
+            +'<button onclick="generateKeys()" id="genBtn" style="padding:8px 20px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap">Generate Keys</button>'
+            +'</div>';
+        } else {
+          const fp=d.fingerprint||'unknown';
+          el.innerHTML='<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
+            +'<div style="flex:1;min-width:200px">'
+            +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="dot dot-green"></span><span style="color:#4ade80;font-weight:600">Keys Active</span></div>'
+            +'<div class="text-sm muted" style="font-family:monospace;font-size:11px;word-break:break-all">'+fp+'</div>'
+            +(d.hasManifest?'<div class="text-sm muted" style="margin-top:4px">cosmos-logos manifest: ✓ configured</div>':'<div class="text-sm" style="color:#fbbf24;margin-top:4px">cosmos-logos manifest: not found</div>')
+            +'</div>'
+            +'<button onclick="generateKeys()" id="genBtn" style="padding:8px 20px;background:#27272a;color:#a1a1aa;border:1px solid #3f3f46;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap">Rotate Keys</button>'
+            +'</div>';
+        }
+      }).catch(()=>{
+        document.getElementById('keyStatus').innerHTML='<div class="muted">Failed to load key status</div>';
+      });
+    }
+    function generateKeys(){
+      const btn=document.getElementById('genBtn');
+      if(btn){btn.disabled=true;btn.textContent='Generating...';}
+      fetch('/api/keys/generate',{method:'POST'}).then(r=>r.json()).then(d=>{
+        if(d.ok){
+          loadKeyStatus();
+        } else {
+          alert('Key generation failed: '+(d.error||'unknown'));
+          if(btn){btn.disabled=false;btn.textContent='Generate Keys';}
+        }
+      }).catch(e=>{
+        alert('Error: '+e.message);
+        if(btn){btn.disabled=false;btn.textContent='Generate Keys';}
+      });
+    }
+    // Load key status on page load (don't wait for auto-refresh)
+    loadKeyStatus();
     </script>`
 
   const titleHtml = `Node Status <span class="badge ${overallBadge}" style="margin-left:12px;font-size:11px"><span class="dot ${allHealthy ? 'dot-green' : healthyCount > 0 ? 'dot-yellow' : 'dot-red'}"></span>${overallLabel}</span>`
