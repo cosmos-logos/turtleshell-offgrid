@@ -556,6 +556,147 @@ app.post('/api/keys/generate', async (req, res) => {
   }
 })
 
+// ── AUTO-UPDATE — fleet image updates + scheduling ─────────
+
+const { execSync, exec } = require('child_process')
+const UPDATE_CONFIG_PATH = path.join(HOME, '.turtleshell', 'update-config.json')
+const UPDATE_LOG_PATH = path.join(HOME, '.turtleshell', 'logs', 'update.log')
+const COMPOSE_PATH = path.join(HOME, 'turtleshell', 'docker-compose.yml')
+const DOCKER = '/usr/local/bin/docker'
+
+function getUpdateConfig() {
+  try { return JSON.parse(fs.readFileSync(UPDATE_CONFIG_PATH, 'utf8')) }
+  catch { return { autoUpdate: false, scheduleHour: 3, scheduleMinute: 0 } }
+}
+
+function saveUpdateConfig(config) {
+  fs.mkdirSync(path.dirname(UPDATE_CONFIG_PATH), { recursive: true })
+  fs.writeFileSync(UPDATE_CONFIG_PATH, JSON.stringify(config, null, 2))
+}
+
+function appendUpdateLog(line) {
+  const ts = new Date().toISOString()
+  const entry = `[${ts}] ${line}\n`
+  fs.mkdirSync(path.dirname(UPDATE_LOG_PATH), { recursive: true })
+  fs.appendFileSync(UPDATE_LOG_PATH, entry)
+  console.log(`[update] ${line}`)
+}
+
+async function performUpdate() {
+  appendUpdateLog('=== Update started ===')
+  const results = { pulled: [], restarted: [], errors: [], startedAt: new Date().toISOString() }
+
+  try {
+    // Step 1: Pull latest images
+    appendUpdateLog('Step 1/3 — Pulling latest images...')
+    if (fs.existsSync(COMPOSE_PATH)) {
+      try {
+        const pullOutput = execSync(`${DOCKER} compose -f "${COMPOSE_PATH}" pull 2>&1`, { timeout: 300000 }).toString()
+        const pulled = pullOutput.match(/Pulled/g)
+        appendUpdateLog(`Pulled ${pulled ? pulled.length : 0} updated images`)
+        results.pulled = pullOutput.split('\n').filter(l => l.includes('Pulled'))
+      } catch (e) {
+        appendUpdateLog(`Pull warning: ${e.message.substring(0, 200)}`)
+        results.errors.push(`pull: ${e.message.substring(0, 200)}`)
+      }
+    }
+
+    // Step 2: Recreate containers with new images
+    appendUpdateLog('Step 2/3 — Recreating containers...')
+    try {
+      const upOutput = execSync(`${DOCKER} compose -f "${COMPOSE_PATH}" up -d --remove-orphans 2>&1`, { timeout: 120000 }).toString()
+      const recreated = upOutput.match(/Recreated|Started/g)
+      appendUpdateLog(`Recreated ${recreated ? recreated.length : 0} containers`)
+      results.restarted = upOutput.split('\n').filter(l => l.includes('Recreat') || l.includes('Start'))
+    } catch (e) {
+      appendUpdateLog(`Recreate error: ${e.message.substring(0, 200)}`)
+      results.errors.push(`recreate: ${e.message.substring(0, 200)}`)
+    }
+
+    // Step 3: Verify health
+    appendUpdateLog('Step 3/3 — Verifying fleet health...')
+    await new Promise(r => setTimeout(r, 10000))
+    try {
+      const ps = execSync(`${DOCKER} ps --format "{{.Names}}\t{{.Status}}" 2>&1`, { timeout: 15000 }).toString()
+      const lines = ps.trim().split('\n')
+      const healthy = lines.filter(l => l.includes('healthy')).length
+      const total = lines.length
+      appendUpdateLog(`Fleet health: ${healthy}/${total} healthy`)
+      results.health = { healthy, total }
+    } catch {}
+
+    results.completedAt = new Date().toISOString()
+    appendUpdateLog(`=== Update complete — ${results.errors.length} errors ===`)
+  } catch (e) {
+    appendUpdateLog(`=== Update failed: ${e.message} ===`)
+    results.errors.push(e.message)
+  }
+  return results
+}
+
+// GET /api/updates/check — current vs available versions
+app.get('/api/updates/check', async (req, res) => {
+  try {
+    const ps = execSync(`${DOCKER} ps --format "{{.Names}}\t{{.Image}}" 2>&1`, { timeout: 15000 }).toString()
+    const running = ps.trim().split('\n').map(l => {
+      const [name, image] = l.split('\t')
+      return { name, image }
+    })
+    res.json({ running, composePath: COMPOSE_PATH, composeExists: fs.existsSync(COMPOSE_PATH) })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /api/updates/install — pull and restart now
+app.post('/api/updates/install', async (req, res) => {
+  appendUpdateLog('Manual update triggered from dashboard')
+  res.json({ ok: true, message: 'Update started. Check /api/updates/log for progress.' })
+  // Run async — don't block response
+  performUpdate()
+})
+
+// GET /api/updates/log — update log
+app.get('/api/updates/log', (req, res) => {
+  try {
+    const lines = req.query.lines ? parseInt(req.query.lines) : 50
+    const log = fs.readFileSync(UPDATE_LOG_PATH, 'utf8')
+    const allLines = log.trim().split('\n')
+    res.json({ lines: allLines.slice(-lines), total: allLines.length })
+  } catch {
+    res.json({ lines: [], total: 0 })
+  }
+})
+
+// GET /api/updates/schedule — get auto-update config
+app.get('/api/updates/schedule', (req, res) => {
+  res.json(getUpdateConfig())
+})
+
+// POST /api/updates/schedule — set auto-update config
+app.post('/api/updates/schedule', (req, res) => {
+  const { autoUpdate, scheduleHour, scheduleMinute } = req.body
+  const config = {
+    autoUpdate: !!autoUpdate,
+    scheduleHour: Math.max(0, Math.min(23, parseInt(scheduleHour) || 3)),
+    scheduleMinute: Math.max(0, Math.min(59, parseInt(scheduleMinute) || 0)),
+  }
+  saveUpdateConfig(config)
+  appendUpdateLog(`Schedule updated: ${config.autoUpdate ? `auto-update at ${String(config.scheduleHour).padStart(2,'0')}:${String(config.scheduleMinute).padStart(2,'0')}` : 'auto-update disabled'}`)
+  res.json({ ok: true, ...config })
+})
+
+// Auto-update scheduler — checks every minute
+setInterval(() => {
+  const config = getUpdateConfig()
+  if (!config.autoUpdate) return
+  const now = new Date()
+  if (now.getHours() === config.scheduleHour && now.getMinutes() === config.scheduleMinute) {
+    appendUpdateLog('Scheduled auto-update triggered')
+    performUpdate()
+  }
+}, 60000)
+
 // ── PAGE ROUTES ────────────────────────────────────────────
 
 // Redirect root
@@ -649,6 +790,14 @@ app.get('/nodestatus', async (req, res) => {
         <div class="card-hdr"><h3>🔐 Security — Ed25519 Keys</h3><span class="muted text-sm">cosmos-logos sealed envelope</span></div>
         <div id="keyStatus" style="padding:16px 24px"><div class="muted">Loading key status...</div></div>
       </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-hdr"><h3>🔄 Updates</h3><span class="muted text-sm">fleet image management</span></div>
+        <div id="updateStatus" style="padding:16px 24px"><div class="muted">Loading...</div></div>
+        <div id="updateLog" style="display:none;padding:0 24px 16px 24px">
+          <div class="section-hdr" style="margin-bottom:8px">Update Log</div>
+          <pre id="updateLogContent" style="max-height:200px;overflow-y:auto;font-size:11px;line-height:1.5"></pre>
+        </div>
+      </div>
     </div>
     <div class="modal-overlay" id="detailModal" onclick="if(event.target===this)closeModal()">
       <div class="modal">
@@ -721,6 +870,89 @@ app.get('/nodestatus', async (req, res) => {
     }
     // Load key status on page load (don't wait for auto-refresh)
     loadKeyStatus();
+
+    // Updates UI
+    function loadUpdateStatus(){
+      Promise.all([
+        fetch('/api/updates/check').then(r=>r.json()),
+        fetch('/api/updates/schedule').then(r=>r.json()),
+        fetch('/api/updates/log?lines=1').then(r=>r.json()),
+      ]).then(([check,schedule,log])=>{
+        const el=document.getElementById('updateStatus');
+        const images=check.running||[];
+        const lastLog=log.lines&&log.lines.length?log.lines[log.lines.length-1]:'No updates yet';
+        const schedText=schedule.autoUpdate
+          ?'Auto-update at '+String(schedule.scheduleHour).padStart(2,'0')+':'+String(schedule.scheduleMinute).padStart(2,'0')+' daily'
+          :'Auto-update disabled';
+
+        el.innerHTML='<div style="display:flex;flex-direction:column;gap:12px">'
+          +'<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
+          +'<div style="flex:1;min-width:200px">'
+          +'<div style="font-weight:600;margin-bottom:4px">'+images.length+' containers running</div>'
+          +'<div class="text-sm muted">'+schedText+'</div>'
+          +'<div class="text-sm muted" style="margin-top:2px;font-size:10px;font-family:monospace">'+lastLog+'</div>'
+          +'</div>'
+          +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+          +'<button onclick="installUpdate()" id="updateBtn" style="padding:8px 16px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-weight:600;font-size:12px;cursor:pointer;white-space:nowrap">Check & Update</button>'
+          +'<button onclick="toggleLog()" style="padding:8px 16px;background:#27272a;color:#a1a1aa;border:1px solid #3f3f46;border-radius:8px;font-weight:600;font-size:12px;cursor:pointer;white-space:nowrap">View Log</button>'
+          +'</div>'
+          +'</div>'
+          +'<div style="display:flex;align-items:center;gap:12px;padding-top:8px;border-top:1px solid #27272a">'
+          +'<label style="font-size:12px;color:#a1a1aa;white-space:nowrap">Auto-update:</label>'
+          +'<select id="autoUpdateToggle" onchange="saveSchedule()" style="background:#18181b;color:#fafafa;border:1px solid #3f3f46;border-radius:6px;padding:4px 8px;font-size:12px">'
+          +'<option value="off"'+(schedule.autoUpdate?'':' selected')+'>Off</option>'
+          +'<option value="on"'+(schedule.autoUpdate?' selected':'')+'>On</option>'
+          +'</select>'
+          +'<label style="font-size:12px;color:#a1a1aa;white-space:nowrap">Time:</label>'
+          +'<input type="time" id="autoUpdateTime" value="'+String(schedule.scheduleHour).padStart(2,'0')+':'+String(schedule.scheduleMinute).padStart(2,'0')+'" onchange="saveSchedule()" style="background:#18181b;color:#fafafa;border:1px solid #3f3f46;border-radius:6px;padding:4px 8px;font-size:12px">'
+          +'</div>'
+          +'</div>';
+      }).catch(()=>{
+        document.getElementById('updateStatus').innerHTML='<div class="muted">Failed to load update status</div>';
+      });
+    }
+    function installUpdate(){
+      const btn=document.getElementById('updateBtn');
+      if(btn){btn.disabled=true;btn.textContent='Updating...';}
+      fetch('/api/updates/install',{method:'POST'}).then(r=>r.json()).then(()=>{
+        // Poll log until complete
+        const poll=setInterval(()=>{
+          fetch('/api/updates/log?lines=5').then(r=>r.json()).then(d=>{
+            const last=d.lines[d.lines.length-1]||'';
+            if(last.includes('Update complete')||last.includes('Update failed')){
+              clearInterval(poll);
+              if(btn){btn.disabled=false;btn.textContent='Check & Update';}
+              loadUpdateStatus();
+              showLog();
+            }
+          });
+        },3000);
+      }).catch(e=>{
+        alert('Error: '+e.message);
+        if(btn){btn.disabled=false;btn.textContent='Check & Update';}
+      });
+    }
+    function toggleLog(){
+      const el=document.getElementById('updateLog');
+      if(el.style.display==='none'){showLog();el.style.display='block';}
+      else{el.style.display='none';}
+    }
+    function showLog(){
+      fetch('/api/updates/log?lines=30').then(r=>r.json()).then(d=>{
+        document.getElementById('updateLogContent').textContent=d.lines.join('\\n');
+        document.getElementById('updateLog').style.display='block';
+      });
+    }
+    function saveSchedule(){
+      const on=document.getElementById('autoUpdateToggle').value==='on';
+      const time=document.getElementById('autoUpdateTime').value.split(':');
+      fetch('/api/updates/schedule',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({autoUpdate:on,scheduleHour:parseInt(time[0]),scheduleMinute:parseInt(time[1])})
+      }).then(r=>r.json()).then(()=>loadUpdateStatus());
+    }
+    loadUpdateStatus();
     </script>`
 
   const titleHtml = `Node Status <span class="badge ${overallBadge}" style="margin-left:12px;font-size:11px"><span class="dot ${allHealthy ? 'dot-green' : healthyCount > 0 ? 'dot-yellow' : 'dot-red'}"></span>${overallLabel}</span>`
