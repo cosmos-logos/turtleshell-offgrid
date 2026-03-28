@@ -373,10 +373,11 @@ app.get('/api/qr', async (req, res) => {
   const host = req.query.host || req.hostname || 'localhost'
   const httpsEnabled = fs.existsSync(path.join(CERT_DIR, 'node-cert.pem'))
   const scheme = httpsEnabled ? 'https' : 'http'
-  const agentUrl = `${scheme}://${host}:${PORT}/v1/athena`
-  const deepLink = `https://turtleshell.ai/app/agents?connect=${encodeURIComponent(agentUrl)}`
+  // QR points to THIS node's redirect endpoint — forces Safari to accept
+  // the self-signed cert first, then redirects to turtleshell.ai with connect param
+  const redirectUrl = `${scheme}://${host}:${PORT}/connect/qr`
   try {
-    const svg = await QRCode.toString(deepLink, {
+    const svg = await QRCode.toString(redirectUrl, {
       type: 'svg',
       color: { dark: '#4ade80', light: '#00000000' },
       margin: 0,
@@ -1510,24 +1511,32 @@ app.get('/connect/cert', (req, res) => {
 })
 
 // GET /connect/qr — Returns QR code as PNG image
-app.get('/connect/qr', async (req, res) => {
-  const node = getNodeInfo()
+// GET /connect/qr — redirect to turtleshell.ai with connect param
+// The QR code points here. When Safari visits this URL, it accepts the
+// self-signed cert. Then we redirect to turtleshell.ai which can now
+// fetch from this node without cert errors.
+app.get('/connect/qr', (req, res) => {
   const ips = getLocalIPs()
-  const host = req.query.host || ips[0] || 'localhost'
+  const host = req.hostname || ips[0] || 'localhost'
   const httpsEnabled = fs.existsSync(path.join(CERT_DIR, 'node-cert.pem'))
   const scheme = httpsEnabled ? 'https' : 'http'
-  const athenaUrl = `${scheme}://${host}:${PORT}/v1/athena`
-  try {
-    const png = await QRCode.toBuffer(athenaUrl, {
-      color: { dark: '#3ddc84', light: '#00000000' },
-      margin: 1,
-      width: 300,
-    })
-    res.setHeader('Content-Type', 'image/png')
-    res.send(png)
-  } catch (e) {
-    res.status(500).json({ error: 'QR generation failed' })
-  }
+  const agentUrl = `${scheme}://${host}:${PORT}/v1/athena`
+  const deepLink = `https://turtleshell.ai/app/agents?connect=${encodeURIComponent(agentUrl)}`
+  res.send(`<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connecting to TurtleShell.ai...</title>
+<style>body{background:#09090b;color:#fafafa;font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center}
+.wrap{padding:40px}.emoji{font-size:64px;margin-bottom:16px}.msg{font-size:14px;color:#a1a1aa;margin-top:8px}</style>
+</head><body>
+<div class="wrap">
+  <div class="emoji">🐢</div>
+  <h2>Connecting to TurtleShell.ai</h2>
+  <p class="msg">Redirecting to secure handshake...</p>
+</div>
+<script>setTimeout(function(){window.location.href="${deepLink}"},1500)</script>
+</body></html>`)
 })
 
 // GET /connect/manifest — JSON with node info + endpoints
