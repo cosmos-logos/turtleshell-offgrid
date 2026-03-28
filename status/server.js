@@ -561,8 +561,23 @@ app.post('/api/keys/generate', async (req, res) => {
 const { execSync, exec } = require('child_process')
 const UPDATE_CONFIG_PATH = path.join(HOME, '.turtleshell', 'update-config.json')
 const UPDATE_LOG_PATH = path.join(HOME, '.turtleshell', 'logs', 'update.log')
-const COMPOSE_PATH = path.join(HOME, 'turtleshell', 'docker-compose.yml')
-const DOCKER = '/usr/local/bin/docker'
+// In Docker: compose file mounted at /fleet/docker-compose.yml
+// On host: ~/turtleshell/docker-compose.yml
+function findComposePath() {
+  if (fs.existsSync('/fleet/docker-compose.yml')) return '/fleet/docker-compose.yml'
+  const hostPath = path.join(HOME, 'turtleshell', 'docker-compose.yml')
+  if (fs.existsSync(hostPath)) return hostPath
+  return null
+}
+function findDocker() {
+  // Alpine puts docker at /usr/bin/docker; macOS at /usr/local/bin/docker
+  for (const p of ['/usr/bin/docker', '/usr/local/bin/docker']) {
+    try { if (fs.statSync(p).isFile()) return p } catch {}
+  }
+  return 'docker'
+}
+const COMPOSE_PATH = findComposePath()
+const DOCKER = findDocker()
 
 function getUpdateConfig() {
   try { return JSON.parse(fs.readFileSync(UPDATE_CONFIG_PATH, 'utf8')) }
@@ -591,7 +606,7 @@ async function performUpdate() {
     appendUpdateLog('Step 1/3 — Pulling latest images...')
     if (fs.existsSync(COMPOSE_PATH)) {
       try {
-        const pullOutput = execSync(`${DOCKER} compose -f "${COMPOSE_PATH}" pull 2>&1`, { timeout: 300000 }).toString()
+        const pullOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" pull 2>&1`, { timeout: 300000 }).toString()
         const pulled = pullOutput.match(/Pulled/g)
         appendUpdateLog(`Pulled ${pulled ? pulled.length : 0} updated images`)
         results.pulled = pullOutput.split('\n').filter(l => l.includes('Pulled'))
@@ -601,10 +616,23 @@ async function performUpdate() {
       }
     }
 
-    // Step 2: Recreate containers with new images
-    appendUpdateLog('Step 2/3 — Recreating containers...')
+    // Step 2: Recreate fleet containers (exclude self to avoid suicide)
+    appendUpdateLog('Step 2/3 — Recreating fleet containers...')
     try {
-      const upOutput = execSync(`${DOCKER} compose -f "${COMPOSE_PATH}" up -d --remove-orphans 2>&1`, { timeout: 120000 }).toString()
+      // Get list of services excluding turtleshell-offgrid
+      const servicesOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" config --services 2>&1`, { timeout: 10000 }).toString()
+      const services = servicesOutput.trim().split('\n').filter(s => s && s !== 'turtleshell-offgrid')
+      appendUpdateLog(`Updating ${services.length} services (excluding self)`)
+      let upOutput = ''
+      try {
+        upOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" up -d --force-recreate ${services.join(' ')} 2>&1`, { timeout: 120000 }).toString()
+      } catch (e) {
+        // Compose may exit non-zero if a container takes time — retry with plain up -d
+        appendUpdateLog('First pass had issues, running cleanup pass...')
+        try {
+          upOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" up -d ${services.join(' ')} 2>&1`, { timeout: 60000 }).toString()
+        } catch {}
+      }
       const recreated = upOutput.match(/Recreated|Started/g)
       appendUpdateLog(`Recreated ${recreated ? recreated.length : 0} containers`)
       results.restarted = upOutput.split('\n').filter(l => l.includes('Recreat') || l.includes('Start'))
@@ -612,6 +640,7 @@ async function performUpdate() {
       appendUpdateLog(`Recreate error: ${e.message.substring(0, 200)}`)
       results.errors.push(`recreate: ${e.message.substring(0, 200)}`)
     }
+    appendUpdateLog('Note: turtleshell-offgrid image pulled but will apply on next restart')
 
     // Step 3: Verify health
     appendUpdateLog('Step 3/3 — Verifying fleet health...')
