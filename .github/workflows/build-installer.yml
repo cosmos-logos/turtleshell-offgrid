@@ -3,7 +3,7 @@ name: Build macOS Installer
 on:
   push:
     branches: [brain/1.7.x.x]
-    paths: [mac/**, status/**]
+    paths: [mac/**, status/**, .github/workflows/**]
   workflow_dispatch:
     inputs:
       version:
