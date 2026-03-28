@@ -7,9 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version (e.g. 1.7.3)"
-        required: false
-        default: "1.7.3"
+        description: "Version (e.g. 1.7.2)"
+        required: true
+        default: "1.7.2"
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -17,16 +20,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Determine version from input or package.json
+      - name: Set version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(python3 -c "import json; print(json.load(open('status/package.json'))['version'])")
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
       # Write .build-config from secrets
       - name: Write build config
         run: |
-          VERSION="${{ github.event.inputs.version || '1.7.3' }}"
           cat > mac/.build-config <<EOF
           APPLE_ID="${{ secrets.APPLE_ID }}"
           TEAM_ID="${{ secrets.APPLE_TEAM_ID }}"
           APP_SPECIFIC_PASSWORD="${{ secrets.APP_SPECIFIC_PASSWORD }}"
           INSTALLER_IDENTITY="Developer ID Installer: CloudPremise LLC (${{ secrets.APPLE_TEAM_ID }})"
-          VERSION="${VERSION}"
+          VERSION="${{ steps.version.outputs.version }}"
           IDENTIFIER="ai.turtleshell.installer"
           PKG_NAME="TurtleShell"
           EOF
@@ -58,9 +71,8 @@ jobs:
           PKG=$(ls TurtleShell-*.pkg | grep -v unsigned | grep -v component | head -1)
           shasum -a 256 "$PKG" > "${PKG}.sha256"
           echo "PKG_FILE=$PKG" >> $GITHUB_ENV
-          echo "PKG_PATH=mac/build/$PKG" >> $GITHUB_ENV
 
-      # Upload as workflow artifact
+      # Upload as workflow artifact (available for 90 days)
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -70,27 +82,23 @@ jobs:
             mac/build/TurtleShell-*.sha256
           retention-days: 90
 
-      # Create GitHub Release
+      # Create GitHub Release with the signed .pkg attached
+      # Download links on turtleshell.ai point to these release assets
       - name: Create Release
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.event.inputs.version || '1.7.3' }}
-          name: TurtleShell Off-Grid v${{ github.event.inputs.version || '1.7.3' }}
+          tag_name: v${{ steps.version.outputs.version }}
+          name: TurtleShell Off-Grid v${{ steps.version.outputs.version }}
+          body: |
+            ## TurtleShell Off-Grid v${{ steps.version.outputs.version }}
+
+            Signed and notarized macOS installer.
+
+            **Install:** Download `${{ env.PKG_FILE }}` and double-click to install.
+
+            **Verify:** `shasum -a 256 -c ${{ env.PKG_FILE }}.sha256`
           files: |
             mac/build/TurtleShell-*.pkg
             mac/build/TurtleShell-*.sha256
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Trigger turtleshell-web to redeploy (picks up new .pkg from release)
-      - name: Trigger web deploy
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        run: |
-          curl -X POST \
-            -H "Authorization: token ${{ secrets.GH_PAT }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/olympus-616/turtleshell-web/dispatches \
-            -d '{"event_type":"installer-updated","client_payload":{"version":"${{ github.event.inputs.version || '1.7.3' }}"}}'
