@@ -815,18 +815,6 @@ app.get('/nodestatus', async (req, res) => {
         ${serviceRows}
       </div>
       <div style="text-align:center;padding:16px;font-size:11px;color:#52525b">Click any service to view details &middot; Refreshes every 10 seconds</div>
-      <div class="card" style="margin-top:16px">
-        <div class="card-hdr"><h3>🔐 Security — Ed25519 Keys</h3><span class="muted text-sm">cosmos-logos sealed envelope</span></div>
-        <div id="keyStatus" style="padding:16px 24px"><div class="muted">Loading key status...</div></div>
-      </div>
-      <div class="card" style="margin-top:16px">
-        <div class="card-hdr"><h3>🔄 Updates</h3><span class="muted text-sm">fleet image management</span></div>
-        <div id="updateStatus" style="padding:16px 24px"><div class="muted">Loading...</div></div>
-        <div id="updateLog" style="display:none;padding:0 24px 16px 24px">
-          <div class="section-hdr" style="margin-bottom:8px">Update Log</div>
-          <pre id="updateLogContent" style="max-height:200px;overflow-y:auto;font-size:11px;line-height:1.5"></pre>
-        </div>
-      </div>
     </div>
     <div class="modal-overlay" id="detailModal" onclick="if(event.target===this)closeModal()">
       <div class="modal">
@@ -836,8 +824,13 @@ app.get('/nodestatus', async (req, res) => {
     </div>`
 
   const extraHead = `
-    <meta http-equiv="refresh" content="10"/>
     <script>
+    // Auto-refresh only when modal is closed
+    setInterval(()=>{
+      if(!document.getElementById('detailModal').classList.contains('open')){
+        window.location.reload();
+      }
+    },10000);
     function showDetail(port,name,icon){
       document.getElementById('detailModal').classList.add('open');
       document.getElementById('modalTitle').textContent=icon+' '+name+' — :'+port;
@@ -847,7 +840,13 @@ app.get('/nodestatus', async (req, res) => {
         if(d.data) html+='<div class="section-hdr">/health</div><pre>'+JSON.stringify(d.data,null,2)+'</pre>';
         if(d.statusData) html+='<div class="section-hdr mt-4">/status</div><pre>'+JSON.stringify(d.statusData,null,2)+'</pre>';
         if(!d.data&&!d.statusData) html+='<div class="muted mt-4">Service is not responding.</div>';
+        // Show Security section for Athena (port 3401)
+        if(port===3401){
+          html+='<div class="section-hdr mt-4">🔐 Security — Ed25519 Keys</div>';
+          html+='<div id="keyStatus" style="padding:8px 0"><div class="muted">Loading key status...</div></div>';
+        }
         document.getElementById('modalBody').innerHTML=html;
+        if(port===3401) loadKeyStatus();
       }).catch(()=>{
         document.getElementById('modalBody').innerHTML='<div class="muted">Failed to fetch service details.</div>';
       });
@@ -897,91 +896,6 @@ app.get('/nodestatus', async (req, res) => {
         if(btn){btn.disabled=false;btn.textContent='Generate Keys';}
       });
     }
-    // Load key status on page load (don't wait for auto-refresh)
-    loadKeyStatus();
-
-    // Updates UI
-    function loadUpdateStatus(){
-      Promise.all([
-        fetch('/api/updates/check').then(r=>r.json()),
-        fetch('/api/updates/schedule').then(r=>r.json()),
-        fetch('/api/updates/log?lines=1').then(r=>r.json()),
-      ]).then(([check,schedule,log])=>{
-        const el=document.getElementById('updateStatus');
-        const images=check.running||[];
-        const lastLog=log.lines&&log.lines.length?log.lines[log.lines.length-1]:'No updates yet';
-        const schedText=schedule.autoUpdate
-          ?'Auto-update at '+String(schedule.scheduleHour).padStart(2,'0')+':'+String(schedule.scheduleMinute).padStart(2,'0')+' daily'
-          :'Auto-update disabled';
-
-        el.innerHTML='<div style="display:flex;flex-direction:column;gap:12px">'
-          +'<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
-          +'<div style="flex:1;min-width:200px">'
-          +'<div style="font-weight:600;margin-bottom:4px">'+images.length+' containers running</div>'
-          +'<div class="text-sm muted">'+schedText+'</div>'
-          +'<div class="text-sm muted" style="margin-top:2px;font-size:10px;font-family:monospace">'+lastLog+'</div>'
-          +'</div>'
-          +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
-          +'<button onclick="installUpdate()" id="updateBtn" style="padding:8px 16px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-weight:600;font-size:12px;cursor:pointer;white-space:nowrap">Check & Update</button>'
-          +'<button onclick="toggleLog()" style="padding:8px 16px;background:#27272a;color:#a1a1aa;border:1px solid #3f3f46;border-radius:8px;font-weight:600;font-size:12px;cursor:pointer;white-space:nowrap">View Log</button>'
-          +'</div>'
-          +'</div>'
-          +'<div style="display:flex;align-items:center;gap:12px;padding-top:8px;border-top:1px solid #27272a">'
-          +'<label style="font-size:12px;color:#a1a1aa;white-space:nowrap">Auto-update:</label>'
-          +'<select id="autoUpdateToggle" onchange="saveSchedule()" style="background:#18181b;color:#fafafa;border:1px solid #3f3f46;border-radius:6px;padding:4px 8px;font-size:12px">'
-          +'<option value="off"'+(schedule.autoUpdate?'':' selected')+'>Off</option>'
-          +'<option value="on"'+(schedule.autoUpdate?' selected':'')+'>On</option>'
-          +'</select>'
-          +'<label style="font-size:12px;color:#a1a1aa;white-space:nowrap">Time:</label>'
-          +'<input type="time" id="autoUpdateTime" value="'+String(schedule.scheduleHour).padStart(2,'0')+':'+String(schedule.scheduleMinute).padStart(2,'0')+'" onchange="saveSchedule()" style="background:#18181b;color:#fafafa;border:1px solid #3f3f46;border-radius:6px;padding:4px 8px;font-size:12px">'
-          +'</div>'
-          +'</div>';
-      }).catch(()=>{
-        document.getElementById('updateStatus').innerHTML='<div class="muted">Failed to load update status</div>';
-      });
-    }
-    function installUpdate(){
-      const btn=document.getElementById('updateBtn');
-      if(btn){btn.disabled=true;btn.textContent='Updating...';}
-      fetch('/api/updates/install',{method:'POST'}).then(r=>r.json()).then(()=>{
-        // Poll log until complete
-        const poll=setInterval(()=>{
-          fetch('/api/updates/log?lines=5').then(r=>r.json()).then(d=>{
-            const last=d.lines[d.lines.length-1]||'';
-            if(last.includes('Update complete')||last.includes('Update failed')){
-              clearInterval(poll);
-              if(btn){btn.disabled=false;btn.textContent='Check & Update';}
-              loadUpdateStatus();
-              showLog();
-            }
-          });
-        },3000);
-      }).catch(e=>{
-        alert('Error: '+e.message);
-        if(btn){btn.disabled=false;btn.textContent='Check & Update';}
-      });
-    }
-    function toggleLog(){
-      const el=document.getElementById('updateLog');
-      if(el.style.display==='none'){showLog();el.style.display='block';}
-      else{el.style.display='none';}
-    }
-    function showLog(){
-      fetch('/api/updates/log?lines=30').then(r=>r.json()).then(d=>{
-        document.getElementById('updateLogContent').textContent=d.lines.join('\\n');
-        document.getElementById('updateLog').style.display='block';
-      });
-    }
-    function saveSchedule(){
-      const on=document.getElementById('autoUpdateToggle').value==='on';
-      const time=document.getElementById('autoUpdateTime').value.split(':');
-      fetch('/api/updates/schedule',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({autoUpdate:on,scheduleHour:parseInt(time[0]),scheduleMinute:parseInt(time[1])})
-      }).then(r=>r.json()).then(()=>loadUpdateStatus());
-    }
-    loadUpdateStatus();
     </script>`
 
   const titleHtml = `Node Status <span class="badge ${overallBadge}" style="margin-left:12px;font-size:11px"><span class="dot ${allHealthy ? 'dot-green' : healthyCount > 0 ? 'dot-yellow' : 'dot-red'}"></span>${overallLabel}</span>`
@@ -1345,6 +1259,16 @@ app.get('/settings', (req, res) => {
         </div>
       </div>
 
+      <div class="section-hdr">Updates</div>
+      <div class="card mb-4">
+        <div class="card-hdr"><h3>🔄 Fleet Updates</h3><span class="muted text-sm">pull latest images &amp; restart</span></div>
+        <div id="updateStatus" style="padding:16px 24px"><div class="muted">Loading...</div></div>
+        <div id="updateLog" style="display:none;padding:0 24px 16px 24px">
+          <div class="section-hdr" style="margin-bottom:8px">Update Log</div>
+          <pre id="updateLogContent" style="max-height:300px;overflow-y:auto;font-size:11px;line-height:1.5"></pre>
+        </div>
+      </div>
+
       <div class="section-hdr">About</div>
       <div class="card">
         <div class="card-body text-sm muted">
@@ -1354,7 +1278,89 @@ app.get('/settings', (req, res) => {
           License: Proprietary
         </div>
       </div>
-    </div>`
+    </div>
+    <script>
+    function loadUpdateStatus(){
+      Promise.all([
+        fetch('/api/updates/check').then(r=>r.json()),
+        fetch('/api/updates/schedule').then(r=>r.json()),
+        fetch('/api/updates/log?lines=1').then(r=>r.json()),
+      ]).then(([check,schedule,log])=>{
+        const el=document.getElementById('updateStatus');
+        const images=check.running||[];
+        const lastLog=log.lines&&log.lines.length?log.lines[log.lines.length-1]:'No updates yet';
+        const schedText=schedule.autoUpdate
+          ?'Auto-update at '+String(schedule.scheduleHour).padStart(2,'0')+':'+String(schedule.scheduleMinute).padStart(2,'0')+' daily'
+          :'Auto-update disabled';
+        el.innerHTML='<div style="display:flex;flex-direction:column;gap:12px">'
+          +'<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
+          +'<div style="flex:1;min-width:200px">'
+          +'<div style="font-weight:600;margin-bottom:4px">'+images.length+' containers running</div>'
+          +'<div class="text-sm muted">'+schedText+'</div>'
+          +'<div class="text-sm muted" style="margin-top:2px;font-size:10px;font-family:monospace">'+lastLog+'</div>'
+          +'</div>'
+          +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+          +'<button onclick="installUpdate()" id="updateBtn" style="padding:8px 16px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-weight:600;font-size:12px;cursor:pointer;white-space:nowrap">Check &amp; Update</button>'
+          +'<button onclick="toggleLog()" style="padding:8px 16px;background:#27272a;color:#a1a1aa;border:1px solid #3f3f46;border-radius:8px;font-weight:600;font-size:12px;cursor:pointer;white-space:nowrap">View Log</button>'
+          +'</div>'
+          +'</div>'
+          +'<div style="display:flex;align-items:center;gap:12px;padding-top:8px;border-top:1px solid #27272a">'
+          +'<label style="font-size:12px;color:#a1a1aa;white-space:nowrap">Auto-update:</label>'
+          +'<select id="autoUpdateToggle" onchange="saveSchedule()" style="background:#18181b;color:#fafafa;border:1px solid #3f3f46;border-radius:6px;padding:4px 8px;font-size:12px">'
+          +'<option value="off"'+(schedule.autoUpdate?'':' selected')+'>Off</option>'
+          +'<option value="on"'+(schedule.autoUpdate?' selected':'')+'>On</option>'
+          +'</select>'
+          +'<label style="font-size:12px;color:#a1a1aa;white-space:nowrap">Time:</label>'
+          +'<input type="time" id="autoUpdateTime" value="'+String(schedule.scheduleHour).padStart(2,'0')+':'+String(schedule.scheduleMinute).padStart(2,'0')+'" onchange="saveSchedule()" style="background:#18181b;color:#fafafa;border:1px solid #3f3f46;border-radius:6px;padding:4px 8px;font-size:12px">'
+          +'</div>'
+          +'</div>';
+      }).catch(()=>{
+        document.getElementById('updateStatus').innerHTML='<div class="muted">Failed to load update status</div>';
+      });
+    }
+    function installUpdate(){
+      const btn=document.getElementById('updateBtn');
+      if(btn){btn.disabled=true;btn.textContent='Updating...';}
+      fetch('/api/updates/install',{method:'POST'}).then(r=>r.json()).then(()=>{
+        const poll=setInterval(()=>{
+          fetch('/api/updates/log?lines=5').then(r=>r.json()).then(d=>{
+            const last=d.lines[d.lines.length-1]||'';
+            if(last.includes('Update complete')||last.includes('Update failed')){
+              clearInterval(poll);
+              if(btn){btn.disabled=false;btn.textContent='Check & Update';}
+              loadUpdateStatus();
+              showLog();
+            }
+          });
+        },3000);
+      }).catch(e=>{
+        alert('Error: '+e.message);
+        if(btn){btn.disabled=false;btn.textContent='Check & Update';}
+      });
+    }
+    function toggleLog(){
+      const el=document.getElementById('updateLog');
+      if(el.style.display==='none'){showLog();el.style.display='block';}
+      else{el.style.display='none';}
+    }
+    function showLog(){
+      fetch('/api/updates/log?lines=50').then(r=>r.json()).then(d=>{
+        document.getElementById('updateLogContent').textContent=d.lines.join('\\n');
+        document.getElementById('updateLog').style.display='block';
+        document.getElementById('updateLogContent').scrollTop=document.getElementById('updateLogContent').scrollHeight;
+      });
+    }
+    function saveSchedule(){
+      const on=document.getElementById('autoUpdateToggle').value==='on';
+      const time=document.getElementById('autoUpdateTime').value.split(':');
+      fetch('/api/updates/schedule',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({autoUpdate:on,scheduleHour:parseInt(time[0]),scheduleMinute:parseInt(time[1])})
+      }).then(r=>r.json()).then(()=>loadUpdateStatus());
+    }
+    loadUpdateStatus();
+    </script>`
 
   res.send(layout('/settings', 'Settings', content))
 })
