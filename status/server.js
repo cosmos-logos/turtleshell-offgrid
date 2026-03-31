@@ -373,11 +373,16 @@ app.get('/api/qr', async (req, res) => {
   const host = req.query.host || req.hostname || 'localhost'
   const httpsEnabled = fs.existsSync(path.join(CERT_DIR, 'node-cert.pem'))
   const scheme = httpsEnabled ? 'https' : 'http'
-  // QR points to THIS node's redirect endpoint — forces Safari to accept
-  // the self-signed cert first, then redirects to turtleshell.ai with connect param
-  const redirectUrl = `${scheme}://${host}:${PORT}/connect/qr`
+  // QR encodes the direct agent URL — works for iOS native app (which handles
+  // TLS trust directly) and for the web (via /connect/qr redirect page).
+  // Two QR use cases:
+  //   1. iOS app scans → gets agent URL → connects directly
+  //   2. Phone camera scans → opens /connect/qr in browser → cert accept → redirect to turtleshell.ai
+  // We encode the /connect/qr URL since it works for BOTH (the redirect page
+  // extracts the agent URL and the iOS app can derive it from the base URL)
+  const connectUrl = `${scheme}://${host}:${PORT}/connect/qr`
   try {
-    const svg = await QRCode.toString(redirectUrl, {
+    const svg = await QRCode.toString(connectUrl, {
       type: 'svg',
       color: { dark: '#4ade80', light: '#00000000' },
       margin: 0,
