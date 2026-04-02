@@ -14,12 +14,51 @@ const crypto = require('crypto')
 const app = express()
 const PORT = process.env.PORT || 717
 
+// ── CORS + Private Network Access — allow public origins to reach this off-grid node ──
+app.use((req, res, next) => {
+  const origin = req.headers.origin
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-cosmos-signature, x-cosmos-timestamp, x-developer-key, x-agent-id, x-mcp-server-url, salesforce-url, x-salesforce-token, x-olympus-grid-url')
+    res.setHeader('Access-Control-Allow-Private-Network', 'true')
+  }
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end()
+  }
+  next()
+})
+
 // ── API PROXY — TLS termination for /v1/* fleet traffic ────
 // MUST be mounted BEFORE express.json() so request body isn't consumed.
 // The offgrid dashboard is the HTTPS endpoint. Ares runs plain HTTP.
 // This proxy lets clients reach the full fleet via https://{host}:717/v1/*
 const ARES_PORT = 3451
 app.use('/v1', (req, res) => {
+  // cosmos-logos routes — proxy directly to the service, bypass Ares
+  const cosmosMatch = req.url.match(/^\/([^/]+)\/(\.well-known\/cosmos-logos\.json|ping|(?:api\/)?cosmos\/verify-envelope|chat|health|status)/)
+  if (cosmosMatch) {
+    const service = cosmosMatch[1]
+    const routePath = '/' + cosmosMatch[2].replace(/^api\//, '')
+    const servicePort = (SERVICES.find(s => s.name.toLowerCase() === service) || {}).port
+    if (!servicePort) return res.status(404).json({ error: 'Unknown service' })
+    const fleetHost = fs.existsSync('/.dockerenv') ? 'host.docker.internal' : 'localhost'
+    const proxyReq = http.request({
+      hostname: fleetHost, port: servicePort, path: routePath,
+      method: req.method, headers: { ...req.headers, host: `${fleetHost}:${servicePort}` },
+      timeout: 10000,
+    }, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers)
+      proxyRes.pipe(res)
+    })
+    proxyReq.on('error', (err) => {
+      if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'application/json' })
+      if (!res.writableEnded) res.end(JSON.stringify({ error: 'Service unreachable', detail: err.message }))
+    })
+    req.pipe(proxyReq)
+    return
+  }
   const aresHost = fs.existsSync('/.dockerenv') ? 'host.docker.internal' : 'localhost'
   const options = {
     hostname: aresHost,
@@ -315,7 +354,7 @@ ${extraHead}
     <div class="sidebar-nav">${navItems}</div>
     <div class="sidebar-foot">
       ${node.node_name} &middot; v${node.version || '1.7.0'}<br/>
-      CloudPremise LLC
+      <span style="color:#4ade80">build 012</span> &middot; CloudPremise LLC
     </div>
   </div>
   <div class="main">
