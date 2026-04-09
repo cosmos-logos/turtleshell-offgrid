@@ -647,82 +647,102 @@ async function performUpdate() {
   appendUpdateLog('=== Update started ===')
   const results = { pulled: [], restarted: [], errors: [], startedAt: new Date().toISOString() }
 
+  // Resolve the HOST home directory for compose volume mounts.
+  // Inside Docker, HOME=/root but compose needs the HOST user's home for bind mounts.
+  // The manifest at ~/.turtleshell/manifest.json is on the host, mounted at /root/.turtleshell.
+  let hostHome = HOME
+  try {
+    const manifestPath = path.join(HOME, '.turtleshell', 'manifest.json')
+    if (fs.existsSync(manifestPath)) {
+      // If /fleet exists, we're inside Docker — read host home from manifest install path
+      if (fs.existsSync('/fleet/docker-compose.yml')) {
+        // The compose file is mounted from ~/turtleshell → /fleet, so host home is parent of fleet source
+        const composeContent = fs.readFileSync('/fleet/docker-compose.yml', 'utf8')
+        const homeMatch = composeContent.match(/(\/.+)\/.turtleshell/)
+        if (homeMatch) hostHome = homeMatch[1]
+      }
+    }
+  } catch {}
+
+  // Compose env: set HOME to host path so ${HOME} in compose resolves correctly
+  const composeEnv = { ...process.env, HOME: hostHome, DOCKER_CLI_HINTS: 'false' }
+
   try {
     // Step 1: Pull latest images
-    appendUpdateLog('Step 1/3 — Pulling latest images...')
+    appendUpdateLog('Step 1/4 — Pulling latest images...')
     if (fs.existsSync(COMPOSE_PATH)) {
       try {
-        const pullOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" pull 2>&1`, { timeout: 300000 }).toString()
+        const pullOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" pull 2>&1`, { timeout: 300000, env: composeEnv }).toString()
         const pulled = pullOutput.match(/Pulled/g)
         appendUpdateLog(`Pulled ${pulled ? pulled.length : 0} updated images`)
         results.pulled = pullOutput.split('\n').filter(l => l.includes('Pulled'))
+        // Log image digests for version traceability
+        try {
+          const images = execSync(`${DOCKER} images --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedAt}}" 2>&1 | grep -E "turtleshell-offgrid|pantheon" | head -4`, { timeout: 10000 }).toString().trim()
+          if (images) appendUpdateLog(`Images: ${images.replace(/\n/g, ' | ')}`)
+        } catch {}
       } catch (e) {
-        appendUpdateLog(`Pull warning: ${e.message.substring(0, 200)}`)
+        appendUpdateLog(`Pull error: ${e.message.substring(0, 300)}`)
         results.errors.push(`pull: ${e.message.substring(0, 200)}`)
       }
     }
 
-    // Step 2: Recreate fleet containers (exclude self to avoid suicide)
-    appendUpdateLog('Step 2/3 — Recreating fleet containers...')
+    // Step 2: Recreate fleet containers (exclude self initially)
+    appendUpdateLog('Step 2/4 — Recreating fleet containers...')
     try {
-      // Get list of services excluding turtleshell-offgrid
-      const servicesOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" config --services 2>&1`, { timeout: 10000 }).toString()
+      const servicesOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" config --services 2>&1`, { timeout: 10000, env: composeEnv }).toString()
       const services = servicesOutput.trim().split('\n').filter(s => s && s !== 'turtleshell-offgrid')
-      appendUpdateLog(`Updating ${services.length} services (excluding self)`)
-      let upOutput = ''
+      appendUpdateLog(`Updating ${services.length} services: ${services.join(', ')}`)
       try {
-        upOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" up -d --force-recreate ${services.join(' ')} 2>&1`, { timeout: 120000 }).toString()
+        const upOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" up -d --force-recreate --remove-orphans ${services.join(' ')} 2>&1`, { timeout: 180000, env: composeEnv }).toString()
+        const recreated = upOutput.match(/Recreated|Started|Created/g)
+        appendUpdateLog(`Recreated ${recreated ? recreated.length : 0} containers`)
+        if (upOutput.trim()) appendUpdateLog(`Output: ${upOutput.trim().substring(0, 300)}`)
+        results.restarted = upOutput.split('\n').filter(l => l.includes('Recreat') || l.includes('Start'))
       } catch (e) {
-        // Compose may exit non-zero if a container takes time — retry with plain up -d
-        appendUpdateLog('First pass had issues, running cleanup pass...')
-        try {
-          upOutput = execSync(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" up -d ${services.join(' ')} 2>&1`, { timeout: 60000 }).toString()
-        } catch {}
+        appendUpdateLog(`Recreate error: ${e.message.substring(0, 300)}`)
+        results.errors.push(`recreate: ${e.message.substring(0, 200)}`)
       }
-      const recreated = upOutput.match(/Recreated|Started/g)
-      appendUpdateLog(`Recreated ${recreated ? recreated.length : 0} containers`)
-      results.restarted = upOutput.split('\n').filter(l => l.includes('Recreat') || l.includes('Start'))
     } catch (e) {
-      appendUpdateLog(`Recreate error: ${e.message.substring(0, 200)}`)
-      results.errors.push(`recreate: ${e.message.substring(0, 200)}`)
+      appendUpdateLog(`Services list error: ${e.message.substring(0, 200)}`)
+      results.errors.push(`services: ${e.message.substring(0, 200)}`)
     }
+
     // Step 3: Verify health
-    appendUpdateLog('Step 3/3 — Verifying fleet health...')
+    appendUpdateLog('Step 3/4 — Verifying fleet health...')
     await new Promise(r => setTimeout(r, 10000))
     try {
-      const ps = execSync(`${DOCKER} ps --format "{{.Names}}\t{{.Status}}" 2>&1`, { timeout: 15000 }).toString()
+      const ps = execSync(`${DOCKER} ps --format "{{.Names}}\t{{.Image}}\t{{.Status}}" 2>&1`, { timeout: 15000 }).toString()
       const lines = ps.trim().split('\n')
+      lines.forEach(l => appendUpdateLog(`  ${l}`))
       const healthy = lines.filter(l => l.includes('healthy')).length
-      const total = lines.length
-      appendUpdateLog(`Fleet health: ${healthy}/${total} healthy`)
-      results.health = { healthy, total }
+      appendUpdateLog(`Fleet health: ${healthy}/${lines.length} healthy`)
+      results.health = { healthy, total: lines.length }
     } catch {}
 
     results.completedAt = new Date().toISOString()
-    appendUpdateLog(`=== Update complete — ${results.errors.length} errors ===`)
+    appendUpdateLog(`=== Fleet update complete — ${results.errors.length} errors ===`)
 
     // Step 4: Self-restart — apply the pulled turtleshell-offgrid image.
     // Docker restart policy (unless-stopped) brings us back automatically.
-    // Brief ~5s downtime is expected.
-    if (fs.existsSync(COMPOSE_PATH)) {
-      appendUpdateLog('Step 4/4 — Restarting self to apply dashboard update...')
-      try {
-        // Update manifest version from package.json before restart
-        try {
-          const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'))
-          const manifestPath = path.join(HOME, '.turtleshell', 'manifest.json')
-          if (fs.existsSync(manifestPath)) {
-            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
-            manifest.version = pkg.version
-            fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 4) + '\n')
-            appendUpdateLog(`Manifest updated to v${pkg.version}`)
-          }
-        } catch {}
-        // Detached restart — this kills our process, Docker brings us back with new image
-        exec(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" up -d --force-recreate turtleshell-offgrid`, { timeout: 60000 })
-      } catch (e) {
-        appendUpdateLog(`Self-restart error: ${e.message.substring(0, 200)}`)
+    appendUpdateLog('Step 4/4 — Restarting dashboard to apply update...')
+    try {
+      // Update manifest version from package.json before restart
+      const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'))
+      const manifestPath = path.join(HOME, '.turtleshell', 'manifest.json')
+      if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+        manifest.version = pkg.version
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 4) + '\n')
+        appendUpdateLog(`Manifest updated to v${pkg.version}`)
       }
+    } catch {}
+    try {
+      appendUpdateLog('Restarting turtleshell-offgrid container — expect ~10s downtime...')
+      // Detached exec — this kills our process, Docker restarts us with new image
+      exec(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" up -d --force-recreate turtleshell-offgrid 2>&1`, { env: composeEnv, timeout: 60000 })
+    } catch (e) {
+      appendUpdateLog(`Self-restart error: ${e.message.substring(0, 200)}`)
     }
   } catch (e) {
     appendUpdateLog(`=== Update failed: ${e.message} ===`)
