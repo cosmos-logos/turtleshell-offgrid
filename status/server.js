@@ -167,7 +167,7 @@ function getNodeInfo() {
     const home = process.env.HOME || '/root'
     return JSON.parse(fs.readFileSync(path.join(home, '.turtleshell', 'manifest.json'), 'utf8'))
   } catch {
-    return { node_name: 'TurtleShell Node', node_id: 'unknown', version: '1.7.4.5', architecture: 'unknown' }
+    return { node_name: 'TurtleShell Node', node_id: 'unknown', version: '1.7.4.6', architecture: 'unknown' }
   }
 }
 
@@ -353,7 +353,7 @@ ${extraHead}
     </div>
     <div class="sidebar-nav">${navItems}</div>
     <div class="sidebar-foot">
-      ${node.node_name} &middot; v${node.version || '1.7.4.5'}<br/>
+      ${node.node_name} &middot; v${node.version || '1.7.4.6'}<br/>
       <span style="color:#4ade80">build 012</span> &middot; CloudPremise LLC
     </div>
   </div>
@@ -653,13 +653,17 @@ async function performUpdate() {
   let hostHome = HOME
   try {
     if (fs.existsSync('/fleet/docker-compose.yml')) {
-      // We're inside Docker — parse the host home from the compose mount config
-      const composeContent = fs.readFileSync('/fleet/docker-compose.yml', 'utf8')
-      const homeMatch = composeContent.match(/(\/.+)\/.turtleshell/)
-      if (homeMatch) hostHome = homeMatch[1]
-      appendUpdateLog(`Host home resolved: ${hostHome}`)
+      // We're inside Docker — get the HOST home from the /fleet mount source via docker inspect.
+      // The /fleet mount maps to ~/turtleshell on the host, so parent of that is HOST HOME.
+      const inspectOut = execSync(`${DOCKER} inspect turtleshell-offgrid --format "{{range .Mounts}}{{.Source}} {{.Destination}}\\n{{end}}" 2>&1`, { timeout: 5000 }).toString()
+      const fleetMount = inspectOut.split('\\n').find(l => l.includes('/fleet'))
+      if (fleetMount) {
+        const src = fleetMount.split(' ')[0] // e.g. /Users/alchemisthomer/turtleshell
+        hostHome = path.dirname(src)          // e.g. /Users/alchemisthomer
+      }
+      appendUpdateLog(`Host home: ${hostHome}`)
     }
-  } catch {}
+  } catch (e) { appendUpdateLog(`Home detection: ${e.message.substring(0, 100)}`) }
   const composeEnv = { ...process.env, HOME: hostHome, DOCKER_CLI_HINTS: 'false' }
 
   try {
@@ -825,7 +829,7 @@ app.get('/status', (req, res) => {
   res.json({
     service: 'turtleshell-offgrid',
     status: 'online',
-    version: node.version || '1.7.4.5',
+    version: node.version || '1.7.4.6',
     node_id: node.node_id,
     node_name: node.node_name,
     architecture: node.architecture,
@@ -873,7 +877,7 @@ app.get('/nodestatus', async (req, res) => {
           <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#4ade80);display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">🐢</div>
           <div style="flex:1">
             <div style="font-size:16px;font-weight:700">${node.node_name || 'TurtleShell Node'}</div>
-            <div class="text-sm muted">ID: ${String(node.node_id || '').slice(0,8)} &middot; ${node.architecture || 'arm64'} &middot; v${node.version || '1.7.4.5'}</div>
+            <div class="text-sm muted">ID: ${String(node.node_id || '').slice(0,8)} &middot; ${node.architecture || 'arm64'} &middot; v${node.version || '1.7.4.6'}</div>
           </div>
           <div style="display:flex;gap:24px;text-align:center">
             <div><div style="font-size:20px;font-weight:700;color:#4ade80">${healthyCount}</div><div style="font-size:10px;color:#71717a;text-transform:uppercase;letter-spacing:1px">Healthy</div></div>
@@ -1344,7 +1348,7 @@ app.get('/settings', (req, res) => {
       <div class="section-hdr">About</div>
       <div class="card">
         <div class="card-body text-sm muted">
-          TurtleShell.ai Off-Grid v${node.version || '1.7.4.5'}<br/>
+          TurtleShell.ai Off-Grid v${node.version || '1.7.4.6'}<br/>
           Cosmos-Logos v${node.cosmos_logos_version || '1.0.3'}<br/>
           CloudPremise LLC &middot; 2026<br/>
           License: Proprietary
@@ -1562,7 +1566,7 @@ code,.mono{font-family:'JetBrains Mono',monospace}
 
   <div class="footer">
     <strong>TurtleShell.ai</strong> Off-Grid<br/>
-    ${node.version || '1.7.4.5'} &middot; CloudPremise LLC
+    ${node.version || '1.7.4.6'} &middot; CloudPremise LLC
   </div>
 </div>
 </body>
