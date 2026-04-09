@@ -167,7 +167,7 @@ function getNodeInfo() {
     const home = process.env.HOME || '/root'
     return JSON.parse(fs.readFileSync(path.join(home, '.turtleshell', 'manifest.json'), 'utf8'))
   } catch {
-    return { node_name: 'TurtleShell Node', node_id: 'unknown', version: '1.7.4.2', architecture: 'unknown' }
+    return { node_name: 'TurtleShell Node', node_id: 'unknown', version: '1.7.4.3', architecture: 'unknown' }
   }
 }
 
@@ -353,7 +353,7 @@ ${extraHead}
     </div>
     <div class="sidebar-nav">${navItems}</div>
     <div class="sidebar-foot">
-      ${node.node_name} &middot; v${node.version || '1.7.4.2'}<br/>
+      ${node.node_name} &middot; v${node.version || '1.7.4.3'}<br/>
       <span style="color:#4ade80">build 012</span> &middot; CloudPremise LLC
     </div>
   </div>
@@ -686,8 +686,6 @@ async function performUpdate() {
       appendUpdateLog(`Recreate error: ${e.message.substring(0, 200)}`)
       results.errors.push(`recreate: ${e.message.substring(0, 200)}`)
     }
-    appendUpdateLog('Note: turtleshell-offgrid image pulled but will apply on next restart')
-
     // Step 3: Verify health
     appendUpdateLog('Step 3/3 — Verifying fleet health...')
     await new Promise(r => setTimeout(r, 10000))
@@ -702,6 +700,30 @@ async function performUpdate() {
 
     results.completedAt = new Date().toISOString()
     appendUpdateLog(`=== Update complete — ${results.errors.length} errors ===`)
+
+    // Step 4: Self-restart — apply the pulled turtleshell-offgrid image.
+    // Docker restart policy (unless-stopped) brings us back automatically.
+    // Brief ~5s downtime is expected.
+    if (fs.existsSync(COMPOSE_PATH)) {
+      appendUpdateLog('Step 4/4 — Restarting self to apply dashboard update...')
+      try {
+        // Update manifest version from package.json before restart
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'))
+          const manifestPath = path.join(HOME, '.turtleshell', 'manifest.json')
+          if (fs.existsSync(manifestPath)) {
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+            manifest.version = pkg.version
+            fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 4) + '\n')
+            appendUpdateLog(`Manifest updated to v${pkg.version}`)
+          }
+        } catch {}
+        // Detached restart — this kills our process, Docker brings us back with new image
+        exec(`${DOCKER} compose -p turtleshell -f "${COMPOSE_PATH}" up -d --force-recreate turtleshell-offgrid`, { timeout: 60000 })
+      } catch (e) {
+        appendUpdateLog(`Self-restart error: ${e.message.substring(0, 200)}`)
+      }
+    }
   } catch (e) {
     appendUpdateLog(`=== Update failed: ${e.message} ===`)
     results.errors.push(e.message)
@@ -799,7 +821,7 @@ app.get('/status', (req, res) => {
   res.json({
     service: 'turtleshell-offgrid',
     status: 'online',
-    version: node.version || '1.7.4.2',
+    version: node.version || '1.7.4.3',
     node_id: node.node_id,
     node_name: node.node_name,
     architecture: node.architecture,
@@ -847,7 +869,7 @@ app.get('/nodestatus', async (req, res) => {
           <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#4ade80);display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">🐢</div>
           <div style="flex:1">
             <div style="font-size:16px;font-weight:700">${node.node_name || 'TurtleShell Node'}</div>
-            <div class="text-sm muted">ID: ${String(node.node_id || '').slice(0,8)} &middot; ${node.architecture || 'arm64'} &middot; v${node.version || '1.7.4.2'}</div>
+            <div class="text-sm muted">ID: ${String(node.node_id || '').slice(0,8)} &middot; ${node.architecture || 'arm64'} &middot; v${node.version || '1.7.4.3'}</div>
           </div>
           <div style="display:flex;gap:24px;text-align:center">
             <div><div style="font-size:20px;font-weight:700;color:#4ade80">${healthyCount}</div><div style="font-size:10px;color:#71717a;text-transform:uppercase;letter-spacing:1px">Healthy</div></div>
@@ -1318,7 +1340,7 @@ app.get('/settings', (req, res) => {
       <div class="section-hdr">About</div>
       <div class="card">
         <div class="card-body text-sm muted">
-          TurtleShell.ai Off-Grid v${node.version || '1.7.4.2'}<br/>
+          TurtleShell.ai Off-Grid v${node.version || '1.7.4.3'}<br/>
           Cosmos-Logos v${node.cosmos_logos_version || '1.0.3'}<br/>
           CloudPremise LLC &middot; 2026<br/>
           License: Proprietary
@@ -1536,7 +1558,7 @@ code,.mono{font-family:'JetBrains Mono',monospace}
 
   <div class="footer">
     <strong>TurtleShell.ai</strong> Off-Grid<br/>
-    ${node.version || '1.7.4.2'} &middot; CloudPremise LLC
+    ${node.version || '1.7.4.3'} &middot; CloudPremise LLC
   </div>
 </div>
 </body>
