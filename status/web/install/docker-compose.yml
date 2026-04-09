@@ -81,6 +81,7 @@ services:
       - ${HOME:-.}/.turtleshell:/root/.turtleshell
       - ${HOME:-.}/turtleshell:/fleet
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${HOME:-.}/.turtleshell/docker/config.json:/root/.docker/config.json:ro
     networks:
       - olympus-internal
     depends_on:
