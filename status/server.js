@@ -1417,17 +1417,40 @@ app.get('/settings', (req, res) => {
       const btn=document.getElementById('updateBtn');
       if(btn){btn.disabled=true;btn.textContent='Updating...';}
       fetch('/api/updates/install',{method:'POST'}).then(r=>r.json()).then(()=>{
+        // Phase 1: Poll log until fleet update completes (before self-restart)
+        let phase='fleet';
         const poll=setInterval(()=>{
-          fetch('/api/updates/log?lines=5').then(r=>r.json()).then(d=>{
-            const last=d.lines[d.lines.length-1]||'';
-            if(last.includes('Update complete')||last.includes('Update failed')){
-              clearInterval(poll);
-              if(btn){btn.disabled=false;btn.textContent='Check & Update';}
-              loadUpdateStatus();
-              showLog();
-            }
-          });
-        },3000);
+          if(phase==='fleet'){
+            fetch('/api/updates/log?lines=3').then(r=>r.json()).then(d=>{
+              const last=(d.lines||[]).join(' ');
+              if(last.includes('Restarting dashboard')||last.includes('via sidecar')){
+                // Phase 2: Self-restart starting — poll health until connection drops then recovers
+                phase='restarting';
+                if(btn){btn.textContent='Restarting...';}
+              }else if(last.includes('Update failed')){
+                clearInterval(poll);
+                if(btn){btn.disabled=false;btn.textContent='Check & Update';}
+                showLog();
+              }
+            }).catch(()=>{
+              // Connection lost = container is restarting
+              phase='restarting';
+              if(btn){btn.textContent='Restarting...';}
+            });
+          }else if(phase==='restarting'){
+            fetch('/health').then(r=>{
+              if(r.ok){
+                // New container is up — reload the page
+                clearInterval(poll);
+                if(btn){btn.textContent='Updated! Reloading...';}
+                setTimeout(()=>window.location.reload(),1000);
+              }
+            }).catch(()=>{
+              // Still down — keep waiting
+              if(btn){btn.textContent='Restarting...';}
+            });
+          }
+        },2000);
       }).catch(e=>{
         alert('Error: '+e.message);
         if(btn){btn.disabled=false;btn.textContent='Check & Update';}
