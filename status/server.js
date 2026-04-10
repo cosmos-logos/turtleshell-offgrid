@@ -167,7 +167,7 @@ function getNodeInfo() {
     const home = process.env.HOME || '/root'
     return JSON.parse(fs.readFileSync(path.join(home, '.turtleshell', 'manifest.json'), 'utf8'))
   } catch {
-    return { node_name: 'TurtleShell Node', node_id: 'unknown', version: '1.7.4.13', architecture: 'unknown' }
+    return { node_name: 'TurtleShell Node', node_id: 'unknown', version: '1.7.4.14', architecture: 'unknown' }
   }
 }
 
@@ -353,7 +353,7 @@ ${extraHead}
     </div>
     <div class="sidebar-nav">${navItems}</div>
     <div class="sidebar-foot">
-      ${node.node_name} &middot; v${node.version || '1.7.4.13'}<br/>
+      ${node.node_name} &middot; v${node.version || '1.7.4.14'}<br/>
       <span style="color:#4ade80">build 012</span> &middot; CloudPremise LLC
     </div>
   </div>
@@ -733,20 +733,20 @@ async function performUpdate() {
         appendUpdateLog(`Manifest: v${pkg.version}`)
       }
     } catch {}
-    // Self-restart: a container cannot force-recreate itself (the process dies mid-command).
-    // Instead, write a restart script to the host filesystem (/fleet is mounted from ~/turtleshell)
-    // and execute it detached via the Docker socket. The script runs ON THE HOST after we exit.
-    appendUpdateLog('Restarting turtleshell-offgrid — expect ~30s downtime...')
+    // Self-restart: a container cannot force-recreate itself (process dies mid-command).
+    // Solution: write a restart script to /fleet (host-mounted ~/turtleshell), then launch
+    // a detached docker:cli sidecar that executes it. The sidecar runs on the host Docker
+    // daemon, survives the offgrid container being killed, and brings the new one up.
+    appendUpdateLog('Restarting turtleshell-offgrid via sidecar — expect ~30s downtime...')
     const restartScript = path.join('/fleet', '.restart.sh')
-    const dockerPath = DOCKER
-    const composeFile = COMPOSE_PATH
     fs.writeFileSync(restartScript, `#!/bin/sh
-sleep 2
-HOME="${hostHome}" ${dockerPath} compose -p turtleshell -f "${composeFile}" up -d --force-recreate turtleshell-offgrid >> "${path.join('/root/.turtleshell/logs/update.log')}" 2>&1
-rm -f "${restartScript}"
+sleep 3
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Sidecar: restarting turtleshell-offgrid..." >> /host-data/logs/update.log
+HOME=${hostHome} docker compose -p turtleshell -f /fleet/docker-compose.yml up -d --force-recreate turtleshell-offgrid >> /host-data/logs/update.log 2>&1
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Sidecar: restart complete" >> /host-data/logs/update.log
+rm -f /fleet/.restart.sh
 `, { mode: 0o755 })
-    // Launch the script via a detached alpine container that shares the Docker socket
-    exec(`${DOCKER} run --rm -d -v /var/run/docker.sock:/var/run/docker.sock -v ${hostHome}/turtleshell:/fleet -v ${hostHome}/.turtleshell:/root/.turtleshell -e HOME=${hostHome} --entrypoint sh docker:cli /fleet/.restart.sh 2>&1`, { timeout: 15000 })
+    exec(`${DOCKER} run --rm -d --name restart-sidecar -v /var/run/docker.sock:/var/run/docker.sock -v ${hostHome}/turtleshell:/fleet -v ${hostHome}/.turtleshell:/host-data docker:cli sh /fleet/.restart.sh 2>&1`, { timeout: 15000 })
   } catch (e) {
     appendUpdateLog(`=== Update failed: ${e.message} ===`)
     results.errors.push(e.message)
@@ -844,7 +844,7 @@ app.get('/status', (req, res) => {
   res.json({
     service: 'turtleshell-offgrid',
     status: 'online',
-    version: node.version || '1.7.4.13',
+    version: node.version || '1.7.4.14',
     node_id: node.node_id,
     node_name: node.node_name,
     architecture: node.architecture,
@@ -892,7 +892,7 @@ app.get('/nodestatus', async (req, res) => {
           <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#4ade80);display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">🐢</div>
           <div style="flex:1">
             <div style="font-size:16px;font-weight:700">${node.node_name || 'TurtleShell Node'}</div>
-            <div class="text-sm muted">ID: ${String(node.node_id || '').slice(0,8)} &middot; ${node.architecture || 'arm64'} &middot; v${node.version || '1.7.4.13'}</div>
+            <div class="text-sm muted">ID: ${String(node.node_id || '').slice(0,8)} &middot; ${node.architecture || 'arm64'} &middot; v${node.version || '1.7.4.14'}</div>
           </div>
           <div style="display:flex;gap:24px;text-align:center">
             <div><div style="font-size:20px;font-weight:700;color:#4ade80">${healthyCount}</div><div style="font-size:10px;color:#71717a;text-transform:uppercase;letter-spacing:1px">Healthy</div></div>
@@ -1363,7 +1363,7 @@ app.get('/settings', (req, res) => {
       <div class="section-hdr">About</div>
       <div class="card">
         <div class="card-body text-sm muted">
-          TurtleShell.ai Off-Grid v${node.version || '1.7.4.13'}<br/>
+          TurtleShell.ai Off-Grid v${node.version || '1.7.4.14'}<br/>
           Cosmos-Logos v${node.cosmos_logos_version || '1.0.3'}<br/>
           CloudPremise LLC &middot; 2026<br/>
           License: Proprietary
@@ -1581,7 +1581,7 @@ code,.mono{font-family:'JetBrains Mono',monospace}
 
   <div class="footer">
     <strong>TurtleShell.ai</strong> Off-Grid<br/>
-    ${node.version || '1.7.4.13'} &middot; CloudPremise LLC
+    ${node.version || '1.7.4.14'} &middot; CloudPremise LLC
   </div>
 </div>
 </body>
