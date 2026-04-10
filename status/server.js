@@ -759,6 +759,9 @@ rm -f /fleet/.restart.sh
 }
 
 // GET /api/updates/check — current vs available versions
+// GET /api/node-info — lightweight version check (used by auto-reload poll)
+app.get('/api/node-info', (req, res) => { res.json(getNodeInfo()) })
+
 app.get('/api/updates/check', async (req, res) => {
   try {
     const ps = execSync(`${DOCKER} ps --format "{{.Names}}\t{{.Image}}" 2>&1`, { timeout: 15000 }).toString()
@@ -1416,19 +1419,20 @@ app.get('/settings', (req, res) => {
     function installUpdate(){
       const btn=document.getElementById('updateBtn');
       if(btn){btn.disabled=true;btn.textContent='Updating...';}
-      let sawDown=false;
+      const startVersion=document.querySelector('.muted')?.textContent?.match(/v([\\d.]+)/)?.[1]||'';
       fetch('/api/updates/install',{method:'POST'}).catch(()=>{});
-      // Simple: poll /health every 2s. When it fails = restarting. When it recovers = reload.
+      // Poll /api/node-info for version change. Only reload when version is DIFFERENT from current.
+      // This avoids premature reload when old container briefly responds during restart.
+      let sawDown=false;
       const poll=setInterval(()=>{
-        fetch('/health',{signal:AbortSignal.timeout(2000)}).then(r=>{
-          if(r.ok&&sawDown){
-            // Was down, now back — new container is up
+        fetch('/api/node-info',{signal:AbortSignal.timeout(2000)}).then(r=>r.json()).then(d=>{
+          const v=d&&d.version||'';
+          if(sawDown&&v&&v!==startVersion){
             clearInterval(poll);
-            if(btn){btn.textContent='Updated! Reloading...';}
+            if(btn){btn.textContent='Updated to v'+v+'! Reloading...';}
             setTimeout(()=>{window.location.href=window.location.pathname+'?v='+Date.now();},500);
           }
         }).catch(()=>{
-          // Connection failed = container is restarting
           sawDown=true;
           if(btn){btn.textContent='Restarting...';}
         });
