@@ -1,6 +1,6 @@
 {
   "name": "turtleshell-status",
-  "version": "1.7.4.14",
+  "version": "1.7.4.15",
   "description": "TurtleShell.ai node status dashboard",
   "main": "server.js",
   "scripts": {
