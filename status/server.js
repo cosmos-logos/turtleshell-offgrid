@@ -8,6 +8,9 @@ const fs = require('fs')
 const path = require('path')
 const QRCode = require('qrcode')
 const https = require('https')
+
+// Single source of truth: version from package.json (baked into the Docker image)
+const APP_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version
 const os = require('os')
 const crypto = require('crypto')
 
@@ -163,16 +166,15 @@ function fetchJSON(port, path) {
 }
 
 function getNodeInfo() {
-  // Version comes from package.json (inside the Docker image), not the host manifest.
-  // The manifest stores node identity (UUID, name, arch) but version belongs to the running code.
-  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'))
+  // Version from APP_VERSION (package.json, baked into Docker image). Always the running code's version.
+  // Manifest stores node identity (UUID, name, arch) — NOT version.
   try {
     const home = process.env.HOME || '/root'
     const manifest = JSON.parse(fs.readFileSync(path.join(home, '.turtleshell', 'manifest.json'), 'utf8'))
-    manifest.version = pkg.version  // Always use the running code's version
+    manifest.version = APP_VERSION
     return manifest
   } catch {
-    return { node_name: 'TurtleShell Node', node_id: 'unknown', version: pkg.version, architecture: 'unknown' }
+    return { node_name: 'TurtleShell Node', node_id: 'unknown', version: APP_VERSION, architecture: 'unknown' }
   }
 }
 
@@ -358,7 +360,7 @@ ${extraHead}
     </div>
     <div class="sidebar-nav">${navItems}</div>
     <div class="sidebar-foot">
-      ${node.node_name} &middot; v${node.version || '1.7.4.16'}<br/>
+      ${node.node_name} &middot; v${node.version || APP_VERSION}<br/>
       <span style="color:#4ade80">build 012</span> &middot; CloudPremise LLC
     </div>
   </div>
@@ -846,7 +848,7 @@ app.get('/status', (req, res) => {
   res.json({
     service: 'turtleshell-offgrid',
     status: 'online',
-    version: node.version || '1.7.4.16',
+    version: node.version || APP_VERSION,
     node_id: node.node_id,
     node_name: node.node_name,
     architecture: node.architecture,
@@ -894,7 +896,7 @@ app.get('/nodestatus', async (req, res) => {
           <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#4ade80);display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">🐢</div>
           <div style="flex:1">
             <div style="font-size:16px;font-weight:700">${node.node_name || 'TurtleShell Node'}</div>
-            <div class="text-sm muted">ID: ${String(node.node_id || '').slice(0,8)} &middot; ${node.architecture || 'arm64'} &middot; v${node.version || '1.7.4.16'}</div>
+            <div class="text-sm muted">ID: ${String(node.node_id || '').slice(0,8)} &middot; ${node.architecture || 'arm64'} &middot; v${node.version || APP_VERSION}</div>
           </div>
           <div style="display:flex;gap:24px;text-align:center">
             <div><div style="font-size:20px;font-weight:700;color:#4ade80">${healthyCount}</div><div style="font-size:10px;color:#71717a;text-transform:uppercase;letter-spacing:1px">Healthy</div></div>
@@ -1365,7 +1367,7 @@ app.get('/settings', (req, res) => {
       <div class="section-hdr">About</div>
       <div class="card">
         <div class="card-body text-sm muted">
-          TurtleShell.ai Off-Grid v${node.version || '1.7.4.16'}<br/>
+          TurtleShell.ai Off-Grid v${node.version || APP_VERSION}<br/>
           Cosmos-Logos v${node.cosmos_logos_version || '1.0.3'}<br/>
           CloudPremise LLC &middot; 2026<br/>
           License: Proprietary
@@ -1583,7 +1585,7 @@ code,.mono{font-family:'JetBrains Mono',monospace}
 
   <div class="footer">
     <strong>TurtleShell.ai</strong> Off-Grid<br/>
-    ${node.version || '1.7.4.16'} &middot; CloudPremise LLC
+    ${node.version || APP_VERSION} &middot; CloudPremise LLC
   </div>
 </div>
 </body>
