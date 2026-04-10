@@ -1425,7 +1425,7 @@ app.get('/settings', (req, res) => {
             // Was down, now back — new container is up
             clearInterval(poll);
             if(btn){btn.textContent='Updated! Reloading...';}
-            setTimeout(()=>window.location.reload(),500);
+            setTimeout(()=>{window.location.href=window.location.pathname+'?v='+Date.now();},500);
           }
         }).catch(()=>{
           // Connection failed = container is restarting
